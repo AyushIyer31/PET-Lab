@@ -2358,12 +2358,16 @@ function updateDiseaseParam(type) {
 let healthFailCount = 0;
 let healthOnce = false;
 let optimizing = false;
+let healthStartTime = Date.now();
 async function checkHealth() {
   const badge = document.getElementById('statusBadge');
   // Skip health checks while optimization is running — server is busy, not down
   if (optimizing) return;
   try {
-    const r = await fetch(API + '/health', { signal: AbortSignal.timeout(5000) });
+    // Use longer timeout during warm-up window (first 90s), shorter after
+    const elapsed = Date.now() - healthStartTime;
+    const timeout = (healthOnce || elapsed > 90000) ? 8000 : 35000;
+    const r = await fetch(API + '/health', { signal: AbortSignal.timeout(timeout) });
     if (r.ok) {
       badge.className = 'status-badge online';
       badge.innerHTML = '<div class="status-dot"></div><span>ML Ready</span>';
@@ -2373,6 +2377,13 @@ async function checkHealth() {
     }
   } catch {}
   healthFailCount++;
+  // During cold-start window (first 3 minutes), show "Waking up" not "Offline"
+  const elapsed = Date.now() - healthStartTime;
+  if (elapsed < 180000 && !healthOnce) {
+    badge.className = 'status-badge offline';
+    badge.innerHTML = '<div class="status-dot" style="background:var(--warning)"></div><span>Waking up ML…</span>';
+    return;
+  }
   if (healthOnce && healthFailCount < 5) return;
   if (healthFailCount >= 4) {
     badge.className = 'status-badge offline';
@@ -2382,6 +2393,9 @@ async function checkHealth() {
 checkHealth();
 setInterval(checkHealth, 20000);
 setTimeout(checkHealth, 3000);
+
+// Keep Render free-tier alive — ping every 8 minutes to prevent cold-start sleeps
+setInterval(() => fetch(API + '/health').catch(() => {}), 8 * 60 * 1000);
 
 // Auto-load PDB database on page load so it's ready when the user browses
 loadPDB();
