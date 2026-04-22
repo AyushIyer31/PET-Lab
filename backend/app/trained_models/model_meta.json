@@ -1,5 +1,5 @@
 {
-  "model_type": "Ensemble (GradientBoosting + XGBoost + RandomForest)",
+  "model_type": "Ensemble (GradientBoosting + XGBoost + LightGBM)",
   "prediction_target": "DDG (kcal/mol)",
   "n_models": 3,
   "n_features": 50,
@@ -8,22 +8,22 @@
     "feature_49": "temperature_C (assay temperature from ThermoMutDB/FireProtDB)",
     "feature_50": "pH (assay pH from ThermoMutDB/FireProtDB)"
   },
-  "training_samples": 8925,
-  "stabilizing_samples": 4925,
-  "destabilizing_samples": 4000,
+  "training_samples": 8905,
+  "stabilizing_samples": 4912,
+  "destabilizing_samples": 3993,
   "data_sources": {
-    "FireProtDB": 3404,
+    "FireProtDB": 3402,
     "ProDDG": 0,
-    "ThermoMutDB": 5521
+    "ThermoMutDB": 5503
   },
   "synthetic_data": false,
   "independent_test_set": "S669 (669 mutations)",
-  "cv_mae": 1.1539,
-  "cv_r2": 0.4249,
-  "cv_pearson": 0.6525,
-  "cv_spearman": 0.6581,
-  "cv_accuracy": 0.7504,
-  "cv_f1": 0.7876,
+  "cv_mae": 1.1025,
+  "cv_r2": 0.4658,
+  "cv_pearson": 0.6826,
+  "cv_spearman": 0.6724,
+  "cv_accuracy": 0.7591,
+  "cv_f1": 0.7957,
   "test_mae": 0.0,
   "test_rmse": 0.0,
   "test_r2": 0.0,
@@ -35,8 +35,8 @@
   "deltaTm_regressor": {
     "n_training_samples": 4953,
     "source": "ThermoMutDB (Pucci et al. 2021)",
-    "cv_mae_celsius": 4.6011,
-    "cv_pearson": 0.526,
+    "cv_mae_celsius": 4.5982,
+    "cv_pearson": 0.5275,
     "cv_spearman": 0.4691,
     "dtm_range": [
       -68.0,

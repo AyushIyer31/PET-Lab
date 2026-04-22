@@ -3,7 +3,7 @@
 Predicts ΔΔG values using an ensemble of 3 regressors:
   - GradientBoostingRegressor (sklearn)
   - XGBRegressor (xgboost)
-  - RandomForestRegressor (sklearn)
+  - LGBMRegressor (lightgbm) — replaces RandomForest for better accuracy
 
 Final prediction = average of all 3 models.
 Trained ONLY on real experimental data — no synthetic mutations.
@@ -25,7 +25,7 @@ import pandas as pd
 import pickle
 from collections import defaultdict
 
-from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
+from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.model_selection import (
     KFold, cross_val_score, cross_val_predict, GroupKFold
 )
@@ -35,6 +35,7 @@ from sklearn.metrics import (
     mean_absolute_error, mean_squared_error, r2_score, confusion_matrix
 )
 from xgboost import XGBRegressor
+from lightgbm import LGBMRegressor
 from scipy.stats import pearsonr, spearmanr
 import warnings
 warnings.filterwarnings('ignore')
@@ -603,7 +604,19 @@ def main():
     print(f"  Removed {removed_overlap} mutations overlapping with S669 test set")
     print(f"  Final training set: {len(train_records)} mutations")
 
-    # ── Step 2.5: Load conservation cache ──
+    # ── Step 2.5: Outlier removal — clip extreme DDG values ──
+    # Extreme DDG values (e.g. ±68 kcal/mol in ThermoMutDB) are likely measurement
+    # artefacts or data entry errors. Clipping to ±10 kcal/mol removes < 1% of samples
+    # while substantially reducing noise that degrades regressor performance.
+    DDG_CLIP = 10.0
+    n_before = len(train_records)
+    train_records = [r for r in train_records if abs(r['ddg']) <= DDG_CLIP]
+    n_clipped = n_before - len(train_records)
+    if n_clipped:
+        print(f"\n  Removed {n_clipped} outlier mutations (|DDG| > {DDG_CLIP} kcal/mol)")
+    print(f"  Training set after outlier removal: {len(train_records)}")
+
+    # ── Step 2.6: Load conservation cache ──
     print("\nLoading PSSM conservation cache...")
     load_conservation_cache()
 
@@ -669,7 +682,7 @@ def main():
     print(f"  Scaled {X_train.shape[1]} features")
 
     # ── Step 5: Train ensemble of 3 regressors ──
-    print("\nSTEP 5: Training ensemble (GradientBoosting + XGBoost + RandomForest)")
+    print("\nSTEP 5: Training ensemble (GradientBoosting + XGBoost + LightGBM)")
     print("-" * 40)
 
     n_pos = np.sum(y_train == 1)
@@ -694,12 +707,12 @@ def main():
     gb_reg.fit(X_train_scaled, y_train_ddg)
     print("    Done.")
 
-    # Model 2: XGBoost
-    print("  Training Model 2: XGBRegressor...")
+    # Model 2: XGBoost (tuned — more trees, slower learning, slightly deeper)
+    print("  Training Model 2: XGBRegressor (1000 trees, lr=0.03)...")
     xgb_reg = XGBRegressor(
-        n_estimators=500,
-        max_depth=5,
-        learning_rate=0.05,
+        n_estimators=1000,
+        max_depth=6,
+        learning_rate=0.03,
         subsample=0.8,
         colsample_bytree=0.8,
         min_child_weight=10,
@@ -711,20 +724,27 @@ def main():
     xgb_reg.fit(X_train_scaled, y_train_ddg)
     print("    Done.")
 
-    # Model 3: RandomForest
-    print("  Training Model 3: RandomForestRegressor...")
-    rf_reg = RandomForestRegressor(
-        n_estimators=500,
-        max_depth=15,
-        min_samples_leaf=5,
-        max_features='sqrt',
+    # Model 3: LightGBM (replaces RandomForest — faster and typically more accurate
+    # on tabular biological data; gradient-boosted vs. bagged trees)
+    print("  Training Model 3: LGBMRegressor...")
+    lgbm_reg = LGBMRegressor(
+        n_estimators=1000,
+        max_depth=6,
+        learning_rate=0.03,
+        num_leaves=63,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        min_child_samples=20,
+        reg_alpha=0.1,
+        reg_lambda=1.0,
         random_state=42,
         n_jobs=-1,
+        verbosity=-1,
     )
-    rf_reg.fit(X_train_scaled, y_train_ddg)
+    lgbm_reg.fit(X_train_scaled, y_train_ddg)
     print("    Done.")
 
-    models = [('GradientBoosting', gb_reg), ('XGBoost', xgb_reg), ('RandomForest', rf_reg)]
+    models = [('GradientBoosting', gb_reg), ('XGBoost', xgb_reg), ('LightGBM', lgbm_reg)]
 
     # ── Step 6: Cross-validation — individual + ensemble ──
     print("\nSTEP 6: Cross-validation (10-fold)")
@@ -970,7 +990,7 @@ def main():
         print(f"  Saved conservation_cache.pkl ({len(_conservation_cache)} proteins)")
 
     meta = {
-        "model_type": "Ensemble (GradientBoosting + XGBoost + RandomForest)",
+        "model_type": "Ensemble (GradientBoosting + XGBoost + LightGBM)",
         "prediction_target": "DDG (kcal/mol)",
         "n_models": 3,
         "n_features": int(X_train.shape[1]),  # 50: 48 physicochemical + temperature + pH
