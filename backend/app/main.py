@@ -186,6 +186,8 @@ async def optimize_petase(req: OptimizationRequest):
             optimization_steps=req.optimization_steps,
             target_temp=req.target_temperature,
             ph=req.ph,
+            ionic_strength_mm=req.ionic_strength_mm,
+            ca_conc_mm=req.ca_conc_mm,
             contamination_scenario=req.contamination_scenario,
         )
         return OptimizationResponse(
