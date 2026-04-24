@@ -81,6 +81,43 @@ SHEET_PROPENSITY = {
     'S': 0.75, 'T': 1.19, 'V': 1.70, 'W': 1.37, 'Y': 1.47,
 }
 
+MOLECULAR_WEIGHT = {
+    'A': 89.1,  'C': 121.2, 'D': 133.1, 'E': 147.1, 'F': 165.2,
+    'G': 75.0,  'H': 155.2, 'I': 131.2, 'K': 146.2, 'L': 131.2,
+    'M': 149.2, 'N': 132.1, 'P': 115.1, 'Q': 146.1, 'R': 174.2,
+    'S': 105.1, 'T': 119.1, 'V': 117.1, 'W': 204.2, 'Y': 181.2,
+}
+HBOND_DONORS = {
+    'A': 1, 'C': 1, 'D': 1, 'E': 1, 'F': 1,
+    'G': 1, 'H': 2, 'I': 1, 'K': 2, 'L': 1,
+    'M': 1, 'N': 2, 'P': 0, 'Q': 2, 'R': 4,
+    'S': 2, 'T': 2, 'V': 1, 'W': 2, 'Y': 2,
+}
+HBOND_ACCEPTORS = {
+    'A': 1, 'C': 0, 'D': 3, 'E': 3, 'F': 0,
+    'G': 1, 'H': 1, 'I': 1, 'K': 1, 'L': 1,
+    'M': 2, 'N': 2, 'P': 1, 'Q': 2, 'R': 1,
+    'S': 2, 'T': 2, 'V': 1, 'W': 0, 'Y': 1,
+}
+TURN_PROPENSITY = {
+    'A': 0.66, 'C': 1.19, 'D': 1.46, 'E': 0.74, 'F': 0.60,
+    'G': 1.56, 'H': 0.95, 'I': 0.47, 'K': 1.01, 'L': 0.59,
+    'M': 0.60, 'N': 1.56, 'P': 1.52, 'Q': 0.98, 'R': 0.95,
+    'S': 1.43, 'T': 0.96, 'V': 0.50, 'W': 0.96, 'Y': 1.14,
+}
+POLARITY_CLASS = {
+    'A': 0, 'C': 1, 'D': 2, 'E': 2, 'F': 0,
+    'G': 0, 'H': 2, 'I': 0, 'K': 2, 'L': 0,
+    'M': 0, 'N': 1, 'P': 0, 'Q': 1, 'R': 2,
+    'S': 1, 'T': 1, 'V': 0, 'W': 0, 'Y': 1,
+}
+SIDECHAIN_PKA = {
+    'A': 0.0,  'C': 8.3,  'D': 3.9,  'E': 4.1,  'F': 0.0,
+    'G': 0.0,  'H': 6.0,  'I': 0.0,  'K': 10.5, 'L': 0.0,
+    'M': 0.0,  'N': 0.0,  'P': 0.0,  'Q': 0.0,  'R': 12.5,
+    'S': 0.0,  'T': 0.0,  'V': 0.0,  'W': 0.0,  'Y': 10.1,
+}
+
 BLOSUM62_DIAG = {
     'A': 4, 'R': 5, 'N': 6, 'D': 6, 'C': 9,
     'Q': 5, 'E': 5, 'G': 6, 'H': 8, 'I': 4,
@@ -280,12 +317,30 @@ def _extract_features(wt_aa: str, position: int, mut_aa: str,
     cons_feats = _get_conservation_features(protein_id, position, wt_aa, mut_aa)
     features.extend(cons_feats)
 
-    # Condition features (2) — only appended when model expects 50 features
+    # Condition features (2) — only appended when model expects 50+ features
     if _n_features >= 50:
-        features.append(float(temperature))  # feature 49: assay temperature (°C)
-        features.append(float(ph))           # feature 50: assay pH
+        features.append(float(temperature))  # feature 49
+        features.append(float(ph))           # feature 50
 
-    return features  # 48 or 50 features depending on loaded model
+    # Extended biochemical features (8) — features 51-58 for v8 model
+    if _n_features >= 58:
+        dMW = MOLECULAR_WEIGHT.get(mut_aa, 130.0) - MOLECULAR_WEIGHT.get(wt_aa, 130.0)
+        dHD = float(HBOND_DONORS.get(mut_aa, 1)    - HBOND_DONORS.get(wt_aa, 1))
+        dHA = float(HBOND_ACCEPTORS.get(mut_aa, 1) - HBOND_ACCEPTORS.get(wt_aa, 1))
+        dTurn = TURN_PROPENSITY.get(mut_aa, 1.0) - TURN_PROPENSITY.get(wt_aa, 1.0)
+        pol_wt  = POLARITY_CLASS.get(wt_aa, 0)
+        pol_mut = POLARITY_CLASS.get(mut_aa, 0)
+        pol_change  = float(pol_mut - pol_wt)
+        charge_gain = 1.0 if pol_mut == 2 and pol_wt != 2 else 0.0
+        charge_loss = 1.0 if pol_wt  == 2 and pol_mut != 2 else 0.0
+        pka_wt  = SIDECHAIN_PKA.get(wt_aa,  0.0)
+        pka_mut = SIDECHAIN_PKA.get(mut_aa, 0.0)
+        import math
+        ion_wt  = 1.0 / (1.0 + 10.0 ** (pka_wt  - float(ph))) if pka_wt  > 0 else 0.0
+        ion_mut = 1.0 / (1.0 + 10.0 ** (pka_mut - float(ph))) if pka_mut > 0 else 0.0
+        features.extend([dMW, dHD, dHA, dTurn, pol_change, charge_gain, charge_loss, ion_mut - ion_wt])
+
+    return features
 
 
 # ═══════════════════════════════════════════════════════════
@@ -356,13 +411,19 @@ def train_model(force_retrain: bool = False) -> dict:
 
 
 def _ensemble_predict(features_scaled):
-    """Get ensemble prediction (average of all models)."""
-    predictions = []
-    weights = _ensemble.get('weights', [1.0/3, 1.0/3, 1.0/3])
-    for (name, model), w in zip(_ensemble['models'], weights):
+    """Get ensemble prediction — stacking meta-learner if available, else weighted average."""
+    base_preds = []
+    for (name, model) in _ensemble['models']:
         pred = model.predict(features_scaled)
-        predictions.append(pred * w)
-    return np.sum(predictions, axis=0) / sum(weights)
+        base_preds.append(pred)
+
+    if _ensemble.get('use_stacking') and _ensemble.get('meta_learner') is not None:
+        stack = np.column_stack(base_preds)
+        return _ensemble['meta_learner'].predict(stack)
+
+    # Fallback: weighted average
+    weights = _ensemble.get('weights', [1.0 / len(base_preds)] * len(base_preds))
+    return np.sum([p * w for p, w in zip(base_preds, weights)], axis=0) / sum(weights)
 
 
 def predict_mutation(wt_aa: str, position: int, mut_aa: str,
