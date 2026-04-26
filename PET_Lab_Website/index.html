@@ -3522,9 +3522,8 @@ function show3DViewer(mutations) {
         window._3dviewer.addModel(pdbData, 'pdb');
         window._3dPdbData = pdbData;
 
-        applyViewerStyle('cartoon');
+        applyViewerStyle('cartoon');   // already calls render()
         window._3dviewer.zoomTo();
-        window._3dviewer.render();
       })
       .catch(err => {
         const loading = document.getElementById('viewer3dLoading');
@@ -3663,13 +3662,11 @@ function focusMutations() {
   if (!v || !window._3dMutations.length) return;
   const residues = window._3dMutations.map(m => m.pos);
   v.zoomTo({ resi: residues });
-  v.render();
 }
 
 function resetView() {
   if (!window._3dviewer) return;
   window._3dviewer.zoomTo();
-  window._3dviewer.render();
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -3718,7 +3715,7 @@ function buildTourSteps() {
       <p style="margin-bottom:10px">The rainbow ribbon traces the polypeptide backbone from
       <span style="color:#6688ff;font-weight:700">N-terminus</span> (blue) to
       <span style="color:#ff6644;font-weight:700">C-terminus</span> (red).
-      <span style="color:#E74C3C;font-weight:700">Red spheres</span> mark the ${muts.length} position${muts.length !== 1 ? 's' : ''} the AI selected for engineering.</p>
+      <span style="color:#10B981;font-weight:700">Green spheres</span> mark the ${muts.length} position${muts.length !== 1 ? 's' : ''} the AI selected for engineering.</p>
       <p>The model scored every possible single amino acid substitution across the full sequence using a gradient-boosted ensemble trained on ~9,000 experimental stability measurements. Only mutations predicted to be thermodynamically beneficial were kept.</p>
     `,
     resi: null,
@@ -3811,32 +3808,51 @@ function buildTourSteps() {
   return steps;
 }
 
+// Apply tour-specific style ONCE at tour start. Never called per-step.
+// All mutation sites shown in green; camera zooming provides visual focus.
+function _applyTourBaseStyle() {
+  const v = window._3dviewer;
+  if (!v) return;
+  const muts = window._3dMutations || [];
+
+  v.removeAllSurfaces();
+  v.removeAllLabels();
+  v.removeAllShapes();
+
+  // Full protein: spectrum cartoon ribbon
+  v.setStyle({}, { cartoon: { color: 'spectrum', opacity: 1.0, thickness: 0.35, arrows: true } });
+
+  // All mutation sites highlighted green — static for the entire tour
+  muts.forEach(m => {
+    v.setStyle({ resi: m.pos }, {
+      cartoon: { color: '#10B981', opacity: 1.0, thickness: 0.48 },
+      stick:   { radius: 0.18, color: '#34D399' },
+    });
+    v.addSphere({ center: { resi: m.pos }, radius: 0.92, color: '#10B981', opacity: 0.58 });
+  });
+
+  v.render();
+}
+
+// Pure camera moves — zero geometry rebuilds, runs at 60fps.
 function _tourCameraFor(s) {
   const v = window._3dviewer;
   if (!v) return;
 
   if (s.camera === 'full') {
-    // Overview: apply style once, smooth zoom, slow spin
     v.spin(false);
-    applyViewerStyle('cartoon', null);
-    v.zoomTo({}, 900);
-    setTimeout(() => v.spin('y', 0.28), 950);
+    v.zoomTo({}, 1000);
+    setTimeout(() => v.spin('y', 0.22), 1050);
 
   } else if (s.camera === 'focus' && s.resi) {
-    // Focus: one style call (with active glow) then zoom straight to residue.
-    // No mid-animation style swap — that was causing the jank/buffering.
     v.spin(false);
-    applyViewerStyle('cartoon', s.resi);      // single style rebuild
-    v.zoomTo({ resi: s.resi }, 1100);         // smooth zoom to residue
-    setTimeout(() => v.zoom(0.72, 600), 1200); // gentle pull-back after zoom settles
-    setTimeout(() => v.spin('y', 0.32), 1900); // slow cinematic orbit
+    v.zoomTo({ resi: s.resi }, 1000);
+    setTimeout(() => v.spin('y', 0.25), 1100);
 
   } else if (s.camera === 'spin') {
-    // Summary: all mutations visible, slow spin
     v.spin(false);
-    applyViewerStyle('cartoon', null);
-    v.zoomTo({}, 900);
-    setTimeout(() => v.spin('y', 0.38), 950);
+    v.zoomTo({}, 1000);
+    setTimeout(() => v.spin('y', 0.30), 1050);
   }
 }
 
@@ -3873,25 +3889,25 @@ function renderTourStep(animate = true) {
   if (bar) { bar.style.transition = 'none'; bar.style.width = '0%'; }
 
   if (animate) {
-    const els = ['tourBadge','tourTitle','tourSubtitle','tourBody'].map(id => document.getElementById(id));
-    // Fade out quickly
-    els.forEach(el => {
-      if (!el) return;
-      el.style.transition = 'opacity 0.15s ease, transform 0.15s ease';
-      el.style.opacity = '0';
-      el.style.transform = 'translateY(8px)';
+    const ids = ['tourBadge','tourTitle','tourSubtitle','tourBody'];
+    // Fade out in one batch
+    ids.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) { el.style.transition = 'opacity 0.12s ease'; el.style.opacity = '0'; }
     });
+    // Swap content and fade in with stagger — use RAF after timeout for clean frame
     setTimeout(() => {
       _setTourContent(s, total);
-      els.forEach((el, i) => {
-        if (!el) return;
-        // Force reflow so transition fires
-        void el.offsetWidth;
-        el.style.transition = `opacity 0.35s cubic-bezier(0.22,1,0.36,1) ${i * 0.06}s, transform 0.35s cubic-bezier(0.22,1,0.36,1) ${i * 0.06}s`;
-        el.style.opacity = '1';
-        el.style.transform = 'translateY(0)';
+      requestAnimationFrame(() => {
+        ids.forEach((id, i) => {
+          const el = document.getElementById(id);
+          if (!el) return;
+          el.style.transition = `opacity 0.32s ease ${i * 0.055}s, transform 0.32s cubic-bezier(0.22,1,0.36,1) ${i * 0.055}s`;
+          el.style.opacity = '1';
+          el.style.transform = 'translateY(0)';
+        });
       });
-    }, 160);
+    }, 130);
   } else {
     _setTourContent(s, total);
   }
@@ -3956,11 +3972,14 @@ function startGuidedTour() {
   _tourIdx = 0;
   const v = window._3dviewer;
   if (v) v.spin(false);
-  // Show full-viewer overlay, hide legend and controls
+
+  // Bake tour style ONCE before overlay fades in — so first frame is already rendered
+  _applyTourBaseStyle();
+
   const overlay = document.getElementById('tourOverlay');
   overlay.style.display = 'block';
   overlay.style.opacity = '0';
-  overlay.style.transition = 'opacity 0.5s ease';
+  overlay.style.transition = 'opacity 0.45s ease';
   setTimeout(() => { overlay.style.opacity = '1'; }, 30);
   document.getElementById('viewer3dLegend').style.display = 'none';
   renderTourStep(false);
