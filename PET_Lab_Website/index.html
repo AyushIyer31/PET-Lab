@@ -3390,34 +3390,37 @@ function show3DViewer(mutations) {
         </div>
       </div>
 
-      <!-- Guided Tour Panel (side card) -->
-      <div id="tourOverlay" style="display:none;position:absolute;top:0;left:0;bottom:0;width:300px;z-index:20;pointer-events:auto">
-        <!-- Frosted side panel -->
-        <div id="tourPanel" style="position:absolute;inset:12px 0 12px 12px;background:rgba(8,8,20,0.92);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.08);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 8px 40px rgba(0,0,0,0.6);">
-          <!-- Progress bar at top -->
-          <div style="height:3px;background:rgba(255,255,255,0.06);position:relative;flex-shrink:0">
-            <div id="tourProgress" style="height:100%;width:0%;background:linear-gradient(90deg,var(--primary),var(--accent));transition:none;border-radius:0 2px 2px 0"></div>
-          </div>
-          <!-- Header -->
-          <div style="padding:14px 16px 10px;border-bottom:1px solid rgba(255,255,255,0.05);flex-shrink:0">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2px">
-              <div id="tourStepLabel" style="font-size:9px;font-weight:700;letter-spacing:2px;color:var(--accent);text-transform:uppercase"></div>
-              <button onclick="endGuidedTour()" style="background:none;border:none;color:rgba(255,255,255,0.3);font-size:16px;cursor:pointer;padding:0;line-height:1" title="Exit tour">&times;</button>
-            </div>
-            <div id="tourTitle" style="font-size:18px;font-weight:800;color:#E8E8ED;letter-spacing:-0.4px;line-height:1.2"></div>
-            <div id="tourSubtitle" style="font-size:11px;color:rgba(255,255,255,0.35);margin-top:3px;font-family:'SF Mono',monospace"></div>
-          </div>
-          <!-- Body -->
-          <div id="tourBody" style="padding:14px 16px;font-size:12px;color:rgba(255,255,255,0.7);line-height:1.7;flex:1;overflow-y:auto"></div>
-          <!-- Footer controls -->
-          <div style="padding:12px 16px;border-top:1px solid rgba(255,255,255,0.05);flex-shrink:0">
-            <!-- Dot indicators -->
-            <div id="tourDots" style="display:flex;gap:4px;align-items:center;justify-content:center;margin-bottom:10px"></div>
-            <div style="display:flex;gap:6px">
-              <button onclick="tourPrev()" id="tourPrevBtn" class="viewer-btn" style="flex:1;font-size:11px">&#8592; Back</button>
-              <button onclick="tourTogglePause()" id="tourPauseBtn" class="viewer-btn" style="flex:0 0 36px;font-size:14px" title="Pause/Resume">&#9646;&#9646;</button>
-              <button onclick="tourNext()" id="tourNextBtn" class="viewer-btn" style="flex:1;font-size:11px;background:rgba(59,111,245,0.4);color:#fff;border-color:rgba(59,111,245,0.5)">Next &#8594;</button>
-            </div>
+      <!-- Guided Tour — Cinematic Full-Viewer Lower-Third -->
+      <div id="tourOverlay" style="display:none;position:absolute;inset:0;z-index:20;pointer-events:none">
+        <!-- Timeline at top -->
+        <div style="position:absolute;top:0;left:0;right:0;height:3px;background:rgba(255,255,255,0.05);pointer-events:none">
+          <div id="tourProgress" style="height:100%;width:0%;background:linear-gradient(90deg,var(--primary),var(--accent));transition:none"></div>
+        </div>
+        <!-- Top-left: exit + step counter -->
+        <div style="position:absolute;top:14px;left:14px;display:flex;align-items:center;gap:10px;pointer-events:auto">
+          <button onclick="endGuidedTour()" style="background:rgba(0,0,0,0.55);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.55);border-radius:7px;font-size:11px;font-weight:600;letter-spacing:0.5px;padding:5px 12px;cursor:pointer;transition:all 0.2s" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='rgba(255,255,255,0.55)'">✕ EXIT TOUR</button>
+          <div id="tourStepLabel" style="font-size:9px;font-weight:700;letter-spacing:2.5px;color:rgba(255,255,255,0.3);text-transform:uppercase;background:rgba(0,0,0,0.4);padding:5px 10px;border-radius:5px;backdrop-filter:blur(8px)"></div>
+        </div>
+        <!-- Top-right: pause button -->
+        <div style="position:absolute;top:14px;right:14px;pointer-events:auto">
+          <button onclick="tourTogglePause()" id="tourPauseBtn" style="background:rgba(0,0,0,0.55);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.55);border-radius:7px;font-size:13px;padding:5px 12px;cursor:pointer;width:38px">⏸</button>
+        </div>
+        <!-- Dot nav — right side vertical -->
+        <div id="tourDots" style="position:absolute;right:16px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:6px;align-items:center;pointer-events:auto"></div>
+        <!-- Lower-third gradient + content -->
+        <div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(to bottom,transparent 0%,rgba(3,3,12,0.7) 30%,rgba(3,3,12,0.97) 100%);padding:60px 36px 24px;pointer-events:auto" id="tourLowerThird">
+          <!-- Mutation type badge -->
+          <div id="tourBadge" style="display:inline-flex;align-items:center;gap:6px;font-size:9px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--accent);border:1px solid rgba(16,185,129,0.35);background:rgba(16,185,129,0.06);padding:4px 10px;border-radius:5px;margin-bottom:12px"></div>
+          <!-- Title -->
+          <div id="tourTitle" style="font-size:clamp(22px,3vw,32px);font-weight:900;color:#fff;letter-spacing:-0.8px;line-height:1.1;margin-bottom:6px;text-shadow:0 2px 20px rgba(0,0,0,0.8)"></div>
+          <!-- Subtitle (WT→MUT) -->
+          <div id="tourSubtitle" style="font-size:13px;color:rgba(255,255,255,0.4);font-family:'SF Mono',monospace;letter-spacing:0.5px;margin-bottom:14px"></div>
+          <!-- Body explanation -->
+          <div id="tourBody" style="font-size:13px;color:rgba(255,255,255,0.72);line-height:1.75;max-width:620px;text-shadow:0 1px 8px rgba(0,0,0,0.6)"></div>
+          <!-- Nav row -->
+          <div style="display:flex;gap:8px;align-items:center;margin-top:20px">
+            <button onclick="tourPrev()" id="tourPrevBtn" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);color:rgba(255,255,255,0.6);padding:7px 18px;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.3px;transition:all 0.2s" onmouseover="this.style.background='rgba(255,255,255,0.12)'" onmouseout="this.style.background='rgba(255,255,255,0.07)'">← BACK</button>
+            <button onclick="tourNext()" id="tourNextBtn" style="background:rgba(59,111,245,0.35);border:1px solid rgba(59,111,245,0.5);color:#fff;padding:7px 22px;border-radius:7px;font-size:12px;font-weight:700;cursor:pointer;letter-spacing:0.5px;transition:all 0.2s" onmouseover="this.style.background='rgba(59,111,245,0.55)'" onmouseout="this.style.background='rgba(59,111,245,0.35)'">NEXT →</button>
           </div>
         </div>
       </div>
@@ -3478,6 +3481,10 @@ function show3DViewer(mutations) {
       .viewer-btn:hover { background:rgba(255,255,255,0.18) }
       .viewer-btn-active { background:rgba(59,111,245,0.4);color:#fff;border-color:rgba(59,111,245,0.5) }
       @keyframes spin { to { transform: rotate(360deg) } }
+      @keyframes tourFadeUp { from { opacity:0; transform:translateY(18px) } to { opacity:1; transform:translateY(0) } }
+      @keyframes tourGlow { 0%,100% { box-shadow:0 0 18px 4px rgba(16,185,129,0.55); } 50% { box-shadow:0 0 36px 12px rgba(16,185,129,0.2); } }
+      #tourLowerThird { animation: tourFadeUp 0.55s cubic-bezier(0.22,1,0.36,1) both }
+      #tourBadge, #tourTitle, #tourSubtitle, #tourBody { transition: opacity 0.35s ease, transform 0.35s ease }
     </style>
   `;
   document.getElementById('modal').classList.add('show');
@@ -3549,7 +3556,7 @@ function downloadPDB() {
   URL.revokeObjectURL(url);
 }
 
-function applyViewerStyle(style) {
+function applyViewerStyle(style, tourResi) {
   const v = window._3dviewer;
   if (!v) return;
   const muts = window._3dMutations;
@@ -3557,50 +3564,77 @@ function applyViewerStyle(style) {
 
   v.removeAllSurfaces();
   v.removeAllLabels();
+  v.removeAllShapes();
 
-  // Base style for whole protein
+  // ── Base protein rendering ──
   if (style === 'cartoon') {
-    v.setStyle({}, { cartoon: { color: 'spectrum', opacity: 0.95 } });
+    v.setStyle({}, { cartoon: { color: 'spectrum', opacity: 1.0, thickness: 0.35, arrows: true } });
   } else if (style === 'stick') {
-    v.setStyle({}, { stick: { radius: 0.12, colorscheme: 'default' } });
+    v.setStyle({}, { stick: { radius: 0.1, colorscheme: 'Jmol' } });
   } else if (style === 'ballstick') {
-    v.setStyle({}, { stick: { radius: 0.1, colorscheme: 'default' }, sphere: { scale: 0.2, colorscheme: 'Jmol' } });
+    v.setStyle({}, { stick: { radius: 0.09, colorscheme: 'Jmol' }, sphere: { scale: 0.22, colorscheme: 'Jmol' } });
   } else if (style === 'surface') {
-    v.setStyle({}, { cartoon: { color: 'spectrum', opacity: 0.3 } });
-    v.addSurface($3Dmol.SurfaceType.VDW, { opacity: 0.6, color: 'white' }, {}, {});
+    v.setStyle({}, { cartoon: { color: 'spectrum', opacity: 0.28, thickness: 0.3 } });
+    v.addSurface($3Dmol.SurfaceType.SAS, { opacity: 0.72, colorscheme: 'whiteCarbon' }, {}, {});
   }
 
-  // Highlight mutation sites in RED
+  // ── Mutation sites ──
+  // During tour: only render the active resi with full detail to keep rendering fast.
+  // At rest (tourResi=null): render all sites lightly.
+  const inTour = tourResi !== null && tourResi !== undefined;
   mutResidues.forEach(resi => {
-    if (style === 'cartoon') {
-      v.setStyle({ resi: resi }, { cartoon: { color: '#E74C3C' }, stick: { radius: 0.15, color: '#E74C3C' } });
-    } else if (style === 'stick') {
-      v.setStyle({ resi: resi }, { stick: { radius: 0.2, color: '#E74C3C' } });
-    } else if (style === 'ballstick') {
-      v.setStyle({ resi: resi }, { stick: { radius: 0.18, color: '#E74C3C' }, sphere: { scale: 0.35, color: '#E74C3C' } });
-    } else if (style === 'surface') {
-      v.setStyle({ resi: resi }, { cartoon: { color: '#E74C3C' }, stick: { radius: 0.15, color: '#E74C3C' } });
-      v.addSurface($3Dmol.SurfaceType.VDW, { opacity: 0.8, color: '#E74C3C' }, { resi: resi });
-    }
+    const isActive = inTour && resi === tourResi;
+    // During tour, skip non-active sites (too costly to rebuild all shapes every step)
+    if (inTour && !isActive) return;
+
+    const color  = isActive ? '#10B981' : '#E74C3C';
+    const color2 = isActive ? '#34D399' : '#FF6B6B';
+
+    v.setStyle({ resi: resi }, {
+      cartoon: { color: color, opacity: 1.0, thickness: 0.45 },
+      stick:   { radius: isActive ? 0.20 : 0.14, color: color2 },
+    });
+
+    // Single glow sphere per site (was two — halves geometry work)
+    v.addSphere({ center: { resi: resi }, radius: isActive ? 1.1 : 0.85,
+                  color: color, opacity: isActive ? 0.65 : 0.45 });
   });
 
-  // Add labels at mutation sites
-  if (window._3dShowLabels) {
+  // ── Labels (only outside tour to avoid per-step label rebuild) ──
+  if (window._3dShowLabels && !inTour) {
     muts.forEach(m => {
       v.addLabel(m.label, {
-        position: { resi: m.pos },
-        backgroundColor: 'rgba(231,76,69,0.85)',
-        backgroundOpacity: 0.85,
-        fontColor: 'white',
-        fontSize: 12,
-        fontOpacity: 1,
-        borderRadius: 4,
-        padding: 4,
-        showBackground: true,
-        alignment: 'center',
-        inFront: true
+        position:        { resi: m.pos },
+        backgroundColor: 'rgba(200,50,50,0.88)',
+        backgroundOpacity: 0.9,
+        fontColor:       'white',
+        fontSize:        12,
+        fontOpacity:     1,
+        borderRadius:    4,
+        padding:         4,
+        showBackground:  true,
+        alignment:       'center',
+        inFront:         true,
       }, { resi: m.pos }, true);
     });
+  } else if (window._3dShowLabels && inTour && tourResi) {
+    // Only label the active residue during tour
+    const m = muts.find(x => x.pos === tourResi);
+    if (m) {
+      v.addLabel(m.label, {
+        position:        { resi: m.pos },
+        backgroundColor: 'rgba(16,185,129,0.9)',
+        backgroundOpacity: 0.9,
+        fontColor:       'white',
+        fontSize:        14,
+        fontOpacity:     1,
+        borderRadius:    4,
+        padding:         4,
+        showBackground:  true,
+        alignment:       'center',
+        inFront:         true,
+      }, { resi: m.pos }, true);
+    }
   }
 
   v.render();
@@ -3780,26 +3814,29 @@ function buildTourSteps() {
 function _tourCameraFor(s) {
   const v = window._3dviewer;
   if (!v) return;
+
   if (s.camera === 'full') {
+    // Overview: apply style once, smooth zoom, slow spin
     v.spin(false);
-    applyViewerStyle('cartoon');
-    v.zoomTo();
-    v.render();
+    applyViewerStyle('cartoon', null);
+    v.zoomTo({}, 900);
+    setTimeout(() => v.spin('y', 0.28), 950);
+
   } else if (s.camera === 'focus' && s.resi) {
+    // Focus: one style call (with active glow) then zoom straight to residue.
+    // No mid-animation style swap — that was causing the jank/buffering.
     v.spin(false);
-    applyViewerStyle('cartoon');
-    v.zoomTo({ resi: s.resi });
-    v.render();
-    // Pull back slightly then do a slow orbit
-    setTimeout(() => {
-      v.zoom(0.62, 800);
-      setTimeout(() => { v.spin('y', 0.8); }, 900);
-    }, 300);
+    applyViewerStyle('cartoon', s.resi);      // single style rebuild
+    v.zoomTo({ resi: s.resi }, 1100);         // smooth zoom to residue
+    setTimeout(() => v.zoom(0.72, 600), 1200); // gentle pull-back after zoom settles
+    setTimeout(() => v.spin('y', 0.32), 1900); // slow cinematic orbit
+
   } else if (s.camera === 'spin') {
-    applyViewerStyle('cartoon');
-    v.zoomTo();
-    v.render();
-    v.spin('y', 0.5);
+    // Summary: all mutations visible, slow spin
+    v.spin(false);
+    applyViewerStyle('cartoon', null);
+    v.zoomTo({}, 900);
+    setTimeout(() => v.spin('y', 0.38), 950);
   }
 }
 
@@ -3831,24 +3868,35 @@ function renderTourStep(animate = true) {
   if (!s) return;
   const total = _tourSteps.length;
 
-  // Update text content with fade
-  const panel = document.getElementById('tourPanel');
-  if (panel && animate) {
-    panel.style.transition = 'opacity 0.25s ease';
-    panel.style.opacity = '0';
+  // Reset progress bar immediately
+  const bar = document.getElementById('tourProgress');
+  if (bar) { bar.style.transition = 'none'; bar.style.width = '0%'; }
+
+  if (animate) {
+    const els = ['tourBadge','tourTitle','tourSubtitle','tourBody'].map(id => document.getElementById(id));
+    // Fade out quickly
+    els.forEach(el => {
+      if (!el) return;
+      el.style.transition = 'opacity 0.15s ease, transform 0.15s ease';
+      el.style.opacity = '0';
+      el.style.transform = 'translateY(8px)';
+    });
     setTimeout(() => {
       _setTourContent(s, total);
-      panel.style.opacity = '1';
-    }, 240);
+      els.forEach((el, i) => {
+        if (!el) return;
+        // Force reflow so transition fires
+        void el.offsetWidth;
+        el.style.transition = `opacity 0.35s cubic-bezier(0.22,1,0.36,1) ${i * 0.06}s, transform 0.35s cubic-bezier(0.22,1,0.36,1) ${i * 0.06}s`;
+        el.style.opacity = '1';
+        el.style.transform = 'translateY(0)';
+      });
+    }, 160);
   } else {
     _setTourContent(s, total);
   }
 
-  // Reset progress bar
-  const bar = document.getElementById('tourProgress');
-  if (bar) { bar.style.transition = 'none'; bar.style.width = '0%'; }
-
-  // Camera
+  // Camera choreography
   _tourCameraFor(s);
 
   // Auto-advance
@@ -3857,28 +3905,47 @@ function renderTourStep(animate = true) {
 }
 
 function _setTourContent(s, total) {
-  const stepLabel = s.type === 'overview' ? 'OVERVIEW' :
-    s.type === 'summary' ? 'SUMMARY' :
-    'MUTATION ' + _tourIdx + ' OF ' + (total - (window._3dMutations.length > 1 ? 2 : 1));
-  document.getElementById('tourStepLabel').textContent = stepLabel;
-  document.getElementById('tourTitle').textContent = s.title;
-  document.getElementById('tourSubtitle').textContent = s.subtitle;
-  document.getElementById('tourBody').innerHTML = s.body;
+  const mutCount = total - (window._3dMutations.length > 1 ? 2 : 1);
+  const stepLabel = s.type === 'overview' ? 'STRUCTURE OVERVIEW' :
+    s.type === 'summary'  ? 'COMBINED DESIGN' :
+    'MUTATION ' + _tourIdx + ' / ' + mutCount;
 
-  // Dots
+  // Badge icon
+  const badgeIcon = s.type === 'overview' ? '🔬' : s.type === 'summary' ? '⚡' : '🧬';
+  const badgeEl = document.getElementById('tourBadge');
+  if (badgeEl) badgeEl.innerHTML = `<span>${badgeIcon}</span> ${stepLabel}`;
+
+  const titleEl = document.getElementById('tourTitle');
+  const subEl   = document.getElementById('tourSubtitle');
+  const bodyEl  = document.getElementById('tourBody');
+  const labelEl = document.getElementById('tourStepLabel');
+
+  if (labelEl) labelEl.textContent = ((_tourIdx + 1) + ' / ' + total);
+  if (titleEl) titleEl.textContent = s.title;
+  if (subEl)   subEl.textContent   = s.subtitle;
+  if (bodyEl)  bodyEl.innerHTML    = s.body;
+
+  // Vertical dot nav (right side)
   let dots = '';
   for (let i = 0; i < total; i++) {
     const active = i === _tourIdx;
-    const isMut = _tourSteps[i]?.type === 'mutation';
-    dots += `<div style="width:${active ? '18px' : '6px'};height:6px;border-radius:${active ? '3px' : '50%'};background:${active ? 'var(--primary)' : isMut ? 'rgba(16,185,129,0.4)' : 'rgba(255,255,255,0.12)'};transition:all 0.35s ease;flex-shrink:0"></div>`;
+    const isMut  = _tourSteps[i]?.type === 'mutation';
+    const bg     = active ? 'var(--primary)' : isMut ? 'rgba(16,185,129,0.45)' : 'rgba(255,255,255,0.15)';
+    dots += `<div onclick="_jumpTourTo(${i})" title="Step ${i+1}" style="width:6px;height:${active ? '20px' : '6px'};border-radius:3px;background:${bg};transition:all 0.35s ease;cursor:pointer;flex-shrink:0"></div>`;
   }
   document.getElementById('tourDots').innerHTML = dots;
 
   // Buttons
   const prevBtn = document.getElementById('tourPrevBtn');
   const nextBtn = document.getElementById('tourNextBtn');
-  if (prevBtn) prevBtn.disabled = (_tourIdx === 0);
-  if (nextBtn) nextBtn.textContent = (_tourIdx === total - 1) ? 'Finish ✓' : 'Next →';
+  if (prevBtn) { prevBtn.disabled = (_tourIdx === 0); prevBtn.style.opacity = (_tourIdx === 0) ? '0.3' : '1'; }
+  if (nextBtn) nextBtn.textContent = (_tourIdx === total - 1) ? 'FINISH ✓' : 'NEXT →';
+}
+
+function _jumpTourTo(idx) {
+  if (!_tourActive) return;
+  _tourIdx = idx;
+  renderTourStep(true);
 }
 
 function startGuidedTour() {
@@ -3889,10 +3956,13 @@ function startGuidedTour() {
   _tourIdx = 0;
   const v = window._3dviewer;
   if (v) v.spin(false);
-  document.getElementById('tourOverlay').style.display = 'block';
+  // Show full-viewer overlay, hide legend and controls
+  const overlay = document.getElementById('tourOverlay');
+  overlay.style.display = 'block';
+  overlay.style.opacity = '0';
+  overlay.style.transition = 'opacity 0.5s ease';
+  setTimeout(() => { overlay.style.opacity = '1'; }, 30);
   document.getElementById('viewer3dLegend').style.display = 'none';
-  const panel = document.getElementById('tourPanel');
-  if (panel) { panel.style.opacity = '0'; setTimeout(() => { panel.style.transition = 'opacity 0.4s ease'; panel.style.opacity = '1'; }, 50); }
   renderTourStep(false);
 }
 
@@ -3903,10 +3973,12 @@ function endGuidedTour() {
   _tourIdx = -1;
   const v = window._3dviewer;
   if (v) v.spin(false);
-  document.getElementById('tourOverlay').style.display = 'none';
+  const overlay = document.getElementById('tourOverlay');
+  overlay.style.opacity = '0';
+  setTimeout(() => { overlay.style.display = 'none'; }, 400);
   document.getElementById('viewer3dLegend').style.display = 'block';
-  applyViewerStyle(window._3dCurrentStyle || 'cartoon');
-  if (v) { v.zoomTo(); v.render(); }
+  applyViewerStyle(window._3dCurrentStyle || 'cartoon', null);
+  if (v) v.zoomTo({}, 800);
 }
 
 function tourTogglePause() {
