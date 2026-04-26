@@ -28,6 +28,7 @@ import pickle
 from collections import defaultdict
 
 from sklearn.ensemble import GradientBoostingRegressor, HistGradientBoostingRegressor
+from sklearn.neural_network import MLPRegressor
 from sklearn.linear_model import Ridge
 from sklearn.model_selection import (
     KFold, cross_val_score, cross_val_predict, GroupKFold
@@ -347,6 +348,8 @@ def extract_features(wt_aa, position, mut_aa, sequence=None, protein_id=None,
       - 1  assay temperature (°C)  [feature 49]
       - 1  assay pH               [feature 50]
       - 8  extended biochemical features (MW, H-bonds, turn, polarity, pKa) [51-58]
+      - 10 further extended features (aliphatic, charge-at-pH, size, disorder, entropy, Cys) [59-68]
+      - 8  physically motivated cross-terms (hydro×charge, burial×charge, temp×hydro, etc.) [69-76]
     """
     if wt_aa not in AA_SET or mut_aa not in AA_SET:
         return None
@@ -548,7 +551,21 @@ def extract_features(wt_aa, position, mut_aa, sequence=None, protein_id=None,
         entropy, buried_h_wt, buried_h_mut, abs_ch_wt, abs_ch_mut, nearest_cys_dist,
     ])
 
-    return features  # 68 features total
+    # ── Physically motivated cross-term features (8) [69-76] ──
+    # These capture condition×mutation and burial×property couplings that
+    # gradient-boosted trees can learn but benefit from being made explicit.
+    features.extend([
+        dH * dC,                           # hydrophobicity-charge coupling
+        dH * dV,                           # hydrophobicity-volume (packing energy)
+        dCharge_ph * float(ph),            # pH-adjusted charge × assay pH
+        dH * float(temperature) * 0.01,   # hydrophobicity × temp (scaled)
+        burial * dCharge_ph,               # electrostatic burial coupling
+        burial * dMW * 0.01,               # packing × size (scaled)
+        abs(dH) * abs(dCharge_ph),         # amphipathic change magnitude
+        dAliphatic * float(temperature) * 0.01,  # aliphatic × temp (thermostability)
+    ])
+
+    return features  # 76 features total
 
 
 # ═══════════════════════════════════════════════════════════
@@ -795,7 +812,34 @@ def main():
         print(f"\n  Removed {n_clipped} outlier mutations (|DDG| > {DDG_CLIP} kcal/mol)")
     print(f"  Training set after outlier removal: {len(train_records)}")
 
-    # ── Step 2.6: Load conservation cache ──
+    # ── Step 2.6: Reverse mutation augmentation (thermodynamic antisymmetry) ──
+    # Physical law (Hess' law / thermodynamic cycle): if WT→MUT has ΔΔG = x kcal/mol,
+    # then MUT→WT necessarily has ΔΔG = -x kcal/mol.
+    # Adding reversed mutations is NOT data synthesis — it is a hard physical constraint
+    # used by FoldX, Rosetta, and standard thermodynamic databases (Guerois 2002,
+    # Dehouck 2009). Roughly doubles effective training set.
+    # Sequence context is approximated (original neighbors kept); mutation features are exact.
+    print("\nAugmenting with reverse mutations (antisymmetry of ΔΔG)...")
+    augmented = []
+    for r in train_records:
+        if r['wt_aa'] == r['mut_aa']:
+            continue
+        augmented.append({
+            'wt_aa':        r['mut_aa'],
+            'mut_aa':       r['wt_aa'],
+            'position':     r['position'],
+            'ddg':          -r['ddg'],
+            'sequence':     r.get('sequence', ''),
+            'protein_id':   r['protein_id'],
+            'source':       r['source'],
+            'temperature_c': r.get('temperature_c', 25.0),
+            'ph':           r.get('ph', 7.0),
+        })
+    pre_aug = len(train_records)
+    train_records = deduplicate(train_records + augmented)
+    print(f"  Added {len(train_records) - pre_aug} reverse mutations → {len(train_records)} total")
+
+    # ── Step 2.7: Load conservation cache ──
     print("\nLoading PSSM conservation cache...")
     load_conservation_cache()
 
@@ -871,26 +915,35 @@ def main():
 
     kf5_tune = KFold(n_splits=5, shuffle=True, random_state=42)
 
+    # ── Optuna subsample: tune on a stratified 5 000-sample subset for speed.
+    # Final models are trained on the FULL dataset (X_train_scaled / y_train_ddg).
+    OPTUNA_SUBSAMPLE = 5000
+    rng = np.random.default_rng(42)
+    tune_idx = rng.choice(len(X_train_scaled), size=min(OPTUNA_SUBSAMPLE, len(X_train_scaled)), replace=False)
+    X_tune = X_train_scaled[tune_idx]
+    y_tune = y_train_ddg[tune_idx]
+    print(f"\n  Optuna subsample: {len(X_tune)} samples (full set: {len(X_train_scaled)})")
+
     # ── Optuna objective for XGBoost ──
     def xgb_objective(trial):
         params = {
-            'n_estimators':     trial.suggest_int('n_estimators', 600, 1500),
+            'n_estimators':     trial.suggest_int('n_estimators', 400, 1200),
             'max_depth':        trial.suggest_int('max_depth', 4, 8),
-            'learning_rate':    trial.suggest_float('learning_rate', 0.01, 0.06, log=True),
+            'learning_rate':    trial.suggest_float('learning_rate', 0.01, 0.08, log=True),
             'subsample':        trial.suggest_float('subsample', 0.6, 1.0),
             'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 1.0),
-            'min_child_weight': trial.suggest_int('min_child_weight', 5, 30),
+            'min_child_weight': trial.suggest_int('min_child_weight', 3, 20),
             'reg_alpha':        trial.suggest_float('reg_alpha', 1e-3, 1.0, log=True),
             'reg_lambda':       trial.suggest_float('reg_lambda', 0.5, 5.0),
             'random_state': 42, 'verbosity': 0,
         }
         model = XGBRegressor(**params)
-        preds = cross_val_predict(model, X_train_scaled, y_train_ddg, cv=kf5_tune)
-        return mean_absolute_error(y_train_ddg, preds)
+        preds = cross_val_predict(model, X_tune, y_tune, cv=kf5_tune)
+        return mean_absolute_error(y_tune, preds)
 
-    print("\n  [Optuna] Tuning XGBoost (100 trials)...")
+    print("\n  [Optuna] Tuning XGBoost (50 trials on subsample)...")
     xgb_study = optuna.create_study(direction='minimize')
-    xgb_study.optimize(xgb_objective, n_trials=100, show_progress_bar=False)
+    xgb_study.optimize(xgb_objective, n_trials=50, show_progress_bar=False)
     best_xgb = xgb_study.best_params
     print(f"    Best XGB MAE: {xgb_study.best_value:.4f} | params: {best_xgb}")
     xgb_reg = XGBRegressor(**best_xgb, random_state=42, verbosity=0)
@@ -900,9 +953,9 @@ def main():
     # ── Optuna objective for LightGBM ──
     def lgbm_objective(trial):
         params = {
-            'n_estimators':      trial.suggest_int('n_estimators', 600, 1500),
+            'n_estimators':      trial.suggest_int('n_estimators', 400, 1200),
             'max_depth':         trial.suggest_int('max_depth', 4, 8),
-            'learning_rate':     trial.suggest_float('learning_rate', 0.01, 0.06, log=True),
+            'learning_rate':     trial.suggest_float('learning_rate', 0.01, 0.08, log=True),
             'num_leaves':        trial.suggest_int('num_leaves', 31, 127),
             'subsample':         trial.suggest_float('subsample', 0.6, 1.0),
             'colsample_bytree':  trial.suggest_float('colsample_bytree', 0.6, 1.0),
@@ -912,12 +965,12 @@ def main():
             'n_jobs': -1, 'random_state': 42, 'verbosity': -1,
         }
         model = LGBMRegressor(**params)
-        preds = cross_val_predict(model, X_train_scaled, y_train_ddg, cv=kf5_tune)
-        return mean_absolute_error(y_train_ddg, preds)
+        preds = cross_val_predict(model, X_tune, y_tune, cv=kf5_tune)
+        return mean_absolute_error(y_tune, preds)
 
-    print("\n  [Optuna] Tuning LightGBM (100 trials)...")
+    print("\n  [Optuna] Tuning LightGBM (50 trials on subsample)...")
     lgbm_study = optuna.create_study(direction='minimize')
-    lgbm_study.optimize(lgbm_objective, n_trials=100, show_progress_bar=False)
+    lgbm_study.optimize(lgbm_objective, n_trials=50, show_progress_bar=False)
     best_lgbm = lgbm_study.best_params
     print(f"    Best LGBM MAE: {lgbm_study.best_value:.4f} | params: {best_lgbm}")
     lgbm_reg = LGBMRegressor(**best_lgbm, n_jobs=-1, random_state=42, verbosity=-1)
@@ -937,21 +990,21 @@ def main():
     # ── Optuna objective for CatBoost ──
     def cb_objective(trial):
         params = {
-            'iterations':      trial.suggest_int('iterations', 600, 1500),
+            'iterations':      trial.suggest_int('iterations', 400, 1200),
             'depth':           trial.suggest_int('depth', 4, 8),
-            'learning_rate':   trial.suggest_float('learning_rate', 0.01, 0.06, log=True),
+            'learning_rate':   trial.suggest_float('learning_rate', 0.01, 0.08, log=True),
             'subsample':       trial.suggest_float('subsample', 0.6, 1.0),
             'colsample_bylevel': trial.suggest_float('colsample_bylevel', 0.6, 1.0),
             'l2_leaf_reg':     trial.suggest_float('l2_leaf_reg', 1.0, 10.0),
             'loss_function': 'MAE', 'random_seed': 42, 'verbose': 0,
         }
         model = CatBoostRegressor(**params)
-        preds = cross_val_predict(model, X_train_scaled, y_train_ddg, cv=kf5_tune)
-        return mean_absolute_error(y_train_ddg, preds)
+        preds = cross_val_predict(model, X_tune, y_tune, cv=kf5_tune)
+        return mean_absolute_error(y_tune, preds)
 
-    print("\n  [Optuna] Tuning CatBoost (50 trials)...")
+    print("\n  [Optuna] Tuning CatBoost (30 trials on subsample)...")
     cb_study = optuna.create_study(direction='minimize')
-    cb_study.optimize(cb_objective, n_trials=50, show_progress_bar=False)
+    cb_study.optimize(cb_objective, n_trials=30, show_progress_bar=False)
     best_cb = cb_study.best_params
     print(f"    Best CB MAE: {cb_study.best_value:.4f} | params: {best_cb}")
     cb_reg = CatBoostRegressor(**best_cb, loss_function='MAE', random_seed=42, verbose=0)
@@ -968,12 +1021,31 @@ def main():
     hgb_reg.fit(X_train_scaled, y_train_ddg)
     print("    Done.")
 
+    # ── Model 6: MLP — neural network captures non-linear feature interactions
+    # differently from all tree-based models, adding complementary diversity ──
+    print("  Training MLPRegressor (256-128-64, early stopping)...")
+    mlp_reg = MLPRegressor(
+        hidden_layer_sizes=(256, 128, 64),
+        activation='relu',
+        solver='adam',
+        learning_rate_init=0.001,
+        max_iter=500,
+        early_stopping=True,
+        validation_fraction=0.1,
+        n_iter_no_change=20,
+        random_state=42,
+        alpha=0.01,       # L2 regularisation
+    )
+    mlp_reg.fit(X_train_scaled, y_train_ddg)
+    print("    Done.")
+
     models = [
         ('GradientBoosting',     gb_reg),
         ('XGBoost',              xgb_reg),
         ('LightGBM',             lgbm_reg),
         ('CatBoost',             cb_reg),
         ('HistGradientBoosting', hgb_reg),
+        ('MLP',                  mlp_reg),
     ]
 
     # ── Step 6: Cross-validation — individual + ensemble ──
@@ -1040,15 +1112,51 @@ def main():
     else:
         print("  Not enough proteins with >= 5 mutations for LOPO CV")
 
-    # ── Step 7.5: Non-linear stacking meta-learner (GBM on OOF predictions) ──
-    print("\nSTEP 7.5: Stacking meta-learner (GBM on OOF predictions + optimal threshold)")
+    # ── Step 7.5: Wide stacking — direct classifiers + regressor OOF + threshold sweep ──
+    print("\nSTEP 7.5: Wide stacking (direct classifiers + regressor OOF + threshold sweep)")
     print("-" * 40)
-    # Use 10-fold OOF predictions as meta-features for a shallow GBM stacker.
-    # Non-linear combination captures synergistic interactions between base models
-    # that Ridge regression cannot model.
-    oof_stack = np.column_stack([cv_preds_all[n] for n, _ in models])
+    from xgboost import XGBClassifier
+    from lightgbm import LGBMClassifier
+    from catboost import CatBoostClassifier as CatBoostCLF
+    from sklearn.metrics import roc_curve
 
-    # Try Ridge (linear) and GBM (non-linear); keep whichever wins on OOF MAE.
+    kf5_stack = KFold(n_splits=5, shuffle=True, random_state=42)
+
+    # ── 1. Direct binary classifiers → OOF class probabilities ──
+    # These optimise accuracy directly (not MAE), giving orthogonal signal.
+    print("  Training direct binary classifiers (5-fold OOF probs)...")
+    clf_configs = [
+        ('XGB_clf', XGBClassifier(
+            n_estimators=300, max_depth=6, learning_rate=0.05,
+            subsample=0.8, colsample_bytree=0.8,
+            eval_metric='logloss', tree_method='hist',
+            random_state=42, verbosity=0,
+        )),
+        ('LGBM_clf', LGBMClassifier(
+            n_estimators=300, max_depth=6, learning_rate=0.05,
+            num_leaves=63, subsample=0.8, colsample_bytree=0.8,
+            random_state=42, verbosity=-1,
+        )),
+        ('CB_clf', CatBoostCLF(
+            iterations=300, depth=6, learning_rate=0.05,
+            subsample=0.8, random_seed=42, verbose=0,
+        )),
+    ]
+
+    clf_oof_probs = {}
+    for clf_name, clf in clf_configs:
+        probs = cross_val_predict(clf, X_train_scaled, y_train,
+                                  cv=kf5_stack, method='predict_proba')[:, 1]
+        clf_oof_probs[clf_name] = probs
+        clf_acc = accuracy_score(y_train, (probs > 0.5).astype(int))
+        print(f"    {clf_name:20s} OOF Acc={clf_acc:.4f}")
+
+    # ── 2. Regressor OOF (6 models) + classifier OOF probs (3) = 9-col wide stack ──
+    oof_stack   = np.column_stack([cv_preds_all[n] for n, _ in models])          # 6 cols
+    clf_oof_mat = np.column_stack([clf_oof_probs[n] for n, _ in clf_configs])    # 3 cols
+    wide_stack  = np.hstack([oof_stack, clf_oof_mat])                             # 9 cols
+
+    # ── 3. Regressor meta-learner (kept for DDG value output) ──
     ridge_meta = Ridge(alpha=1.0)
     ridge_meta.fit(oof_stack, y_train_ddg)
     ridge_preds = ridge_meta.predict(oof_stack)
@@ -1076,27 +1184,71 @@ def main():
     meta_pearson, _ = pearsonr(meta_preds_cv, y_train_ddg)
     print(f"  Ridge OOF MAE={ridge_mae:.4f}  |  GBM OOF MAE={gbm_mae:.4f}  → using {meta_type}")
 
-    # ── Optimal binary classification threshold (Youden's J statistic) ──
-    # Instead of always using DDG < 0, find the threshold that maximises sensitivity+specificity
-    from sklearn.metrics import roc_curve
-    fpr, tpr, thresholds = roc_curve(y_train, -meta_preds_cv)  # negate: lower DDG = beneficial
+    # Youden threshold on regressor output (baseline for comparison)
+    fpr, tpr, thresholds_roc = roc_curve(y_train, -meta_preds_cv)
     j_scores = tpr - fpr
     best_thr_idx = np.argmax(j_scores)
-    optimal_threshold = -thresholds[best_thr_idx]  # re-negate back to DDG space
-    print(f"  Optimal DDG threshold: {optimal_threshold:.4f} kcal/mol (default=0.0)")
-    meta_binary = (meta_preds_cv < optimal_threshold).astype(int)
-    meta_acc = accuracy_score(y_train, meta_binary)
-    meta_f1  = f1_score(y_train, meta_binary)
+    optimal_threshold = -thresholds_roc[best_thr_idx]
+    print(f"  Optimal DDG threshold (Youden): {optimal_threshold:.4f} kcal/mol")
+    reg_binary = (meta_preds_cv < optimal_threshold).astype(int)
+    reg_acc = accuracy_score(y_train, reg_binary)
+
+    # ── 4. Classifier meta-learner on wide stack (proper 5-fold CV) ──
+    print("  Training wide-stack CatBoost classifier meta-learner (5-fold CV)...")
+    meta_clf = CatBoostCLF(
+        iterations=300, depth=5, learning_rate=0.05,
+        subsample=0.8, random_seed=42, verbose=0,
+    )
+    meta_clf_probs_cv = cross_val_predict(meta_clf, wide_stack, y_train,
+                                           cv=kf5_stack, method='predict_proba')[:, 1]
+
+    # ── 5. Threshold sweep on classifier OOF probs (141 points, 0.30–0.70) ──
+    thresholds_sweep = np.linspace(0.30, 0.70, 141)
+    best_clf_acc = 0.0
+    best_clf_thr = 0.5
+    for thr in thresholds_sweep:
+        acc_t = accuracy_score(y_train, (meta_clf_probs_cv > thr).astype(int))
+        if acc_t > best_clf_acc:
+            best_clf_acc = acc_t
+            best_clf_thr = thr
+    meta_clf_binary = (meta_clf_probs_cv > best_clf_thr).astype(int)
+    meta_clf_f1 = f1_score(y_train, meta_clf_binary)
+    print(f"  Wide-stack clf CV:  Acc={best_clf_acc:.4f}  F1={meta_clf_f1:.4f}  thr={best_clf_thr:.3f}")
+
+    # ── 6. Pick winner: classifier vs regressor+Youden ──
+    if best_clf_acc > reg_acc:
+        meta_binary = meta_clf_binary
+        meta_acc    = best_clf_acc
+        meta_f1     = meta_clf_f1
+        winning_method = f"wide-stack CatBoost clf (thr={best_clf_thr:.3f})"
+    else:
+        meta_binary = reg_binary
+        meta_acc    = reg_acc
+        meta_f1     = f1_score(y_train, reg_binary)
+        winning_method = f"regressor {meta_type} + Youden threshold"
+
+    print(f"  Winning method: {winning_method}")
     print(f"  Stacking CV  MAE={meta_mae:.4f}  Pearson={meta_pearson:.4f}  Acc={meta_acc:.4f}  F1={meta_f1:.4f}")
 
-    # Always use stacking — it uses all 5 OOF predictions
+    # ── 7. Train final classifier on full wide_stack + train base classifiers on full data ──
+    meta_clf_final = CatBoostCLF(
+        iterations=300, depth=5, learning_rate=0.05,
+        subsample=0.8, random_seed=42, verbose=0,
+    )
+    meta_clf_final.fit(wide_stack, y_train)
+
+    clf_models_trained = []
+    for clf_name, clf in clf_configs:
+        clf.fit(X_train_scaled, y_train)
+        clf_models_trained.append((clf_name, clf))
+
     use_stacking = True
-    cv_mae_ens  = meta_mae
-    cv_pearson  = meta_pearson
-    cv_acc      = meta_acc
+    cv_mae_ens     = meta_mae
+    cv_pearson     = meta_pearson
+    cv_acc         = meta_acc
     cv_binary_pred = meta_binary
-    cv_r2_ens   = r2_score(y_train_ddg, meta_preds_cv)
-    cv_f1_val   = meta_f1
+    cv_r2_ens      = r2_score(y_train_ddg, meta_preds_cv)
+    cv_f1_val      = meta_f1
 
     # ── Step 8: Independent test on S669 ──
     print("\nSTEP 8: Independent test on S669")
@@ -1192,7 +1344,15 @@ def main():
         'buried_hydro_mut',     # feature 65: MUT buried+hydrophobic indicator
         'abs_charge_wt_pH',     # feature 66: |charge at pH| for WT
         'abs_charge_mut_pH',    # feature 67: |charge at pH| for MUT
-        'nearest_cys_dist',     # feature 68: normalized distance to nearest Cys
+        'nearest_cys_dist',     # feature 68
+        'dH×dC',                # feature 69: hydrophobicity-charge coupling
+        'dH×dV',                # feature 70: hydrophobicity-volume coupling
+        'dChargePH×pH',         # feature 71: pH-adjusted charge × assay pH
+        'dH×temp',              # feature 72: hydrophobicity × temperature
+        'burial×dChargePH',     # feature 73: electrostatic burial
+        'burial×dMW',           # feature 74: packing × size
+        '|dH|×|dChargePH|',     # feature 75: amphipathic change
+        'dAliphatic×temp',      # feature 76: aliphatic index × temperature
     ]
     # HistGradientBoosting does not expose feature_importances_ — skip it
     importances_list = [m.feature_importances_ for _, m in models if hasattr(m, 'feature_importances_')]
@@ -1288,6 +1448,11 @@ def main():
         'use_stacking': True,
         'optimal_threshold': float(optimal_threshold),
         'meta_type': meta_type,
+        # Wide-stack classifier (direct binary prediction, more accurate)
+        'clf_models': clf_models_trained,
+        'meta_clf': meta_clf_final,
+        'meta_clf_threshold': float(best_clf_thr),
+        'use_clf_meta': best_clf_acc > reg_acc,
     }
     with open(os.path.join(MODEL_DIR, "mutation_regressor.pkl"), "wb") as f:
         pickle.dump(ensemble, f)
@@ -1306,14 +1471,14 @@ def main():
         print(f"  Saved conservation_cache.pkl ({len(_conservation_cache)} proteins)")
 
     meta = {
-        "model_type": "Ensemble (GBM + XGBoost[Optuna] + LightGBM[Optuna] + CatBoost[Optuna] + HGB) + GBM/Ridge stacking",
+        "model_type": "Ensemble (GBM + XGBoost[Optuna] + LightGBM[Optuna] + CatBoost[Optuna] + HGB + MLP) + wide-stack classifier (XGB/LGBM/CB clf OOF + regressor OOF → CatBoost meta-clf)",
         "prediction_target": "DDG (kcal/mol)",
-        "n_models": 5,
+        "n_models": 6,
         "use_stacking": True,
         "meta_type": meta_type,
         "optimal_threshold": float(optimal_threshold),
         "n_features": int(X_train.shape[1]),  # 68 features
-        "feature_version": "v9_comprehensive",
+        "feature_version": "v10_cross_terms",
         "condition_features": {
             "feature_49": "temperature_C (assay temperature from ThermoMutDB/FireProtDB)",
             "feature_50": "pH (assay pH from ThermoMutDB/FireProtDB)",

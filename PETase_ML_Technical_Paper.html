@@ -1,0 +1,868 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PETase-ML: Engineering Plastic-Degrading Enzymes with Machine Learning</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Merriweather:ital,wght@0,300;0,400;0,700;1,300;1,400&family=Source+Sans+3:wght@300;400;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  :root {
+    --blue:  #1a4fa0;
+    --lblue: #2563eb;
+    --teal:  #0d9488;
+    --gray:  #374151;
+    --lgray: #6b7280;
+    --bg:    #f9fafb;
+    --white: #ffffff;
+    --bdr:   #e5e7eb;
+    --acc:   #eff6ff;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Merriweather', Georgia, serif;
+    font-size: 10.5pt;
+    line-height: 1.8;
+    color: var(--gray);
+    background: var(--bg);
+  }
+
+  .page {
+    max-width: 820px;
+    margin: 0 auto;
+    background: var(--white);
+    padding: 64px 76px 88px;
+    box-shadow: 0 1px 24px rgba(0,0,0,.08);
+  }
+
+  /* ── Title block ── */
+  .paper-title {
+    font-family: 'Source Sans 3', sans-serif;
+    font-size: 21pt;
+    font-weight: 700;
+    color: var(--blue);
+    line-height: 1.3;
+    margin-bottom: 16px;
+    text-align: center;
+  }
+  .authors {
+    font-family: 'Source Sans 3', sans-serif;
+    font-size: 10pt;
+    color: var(--lgray);
+    text-align: center;
+    margin-bottom: 4px;
+  }
+  .affil {
+    font-family: 'Source Sans 3', sans-serif;
+    font-size: 9pt;
+    color: var(--lgray);
+    text-align: center;
+    margin-bottom: 28px;
+    font-style: italic;
+  }
+  .divider {
+    border: none;
+    border-top: 2px solid var(--blue);
+    opacity: .2;
+    margin: 0 0 26px;
+  }
+
+  /* ── Abstract ── */
+  .abstract {
+    background: var(--acc);
+    border-left: 4px solid var(--lblue);
+    border-radius: 0 8px 8px 0;
+    padding: 16px 22px;
+    margin-bottom: 38px;
+    font-size: 9.5pt;
+    line-height: 1.7;
+  }
+  .abstract .label {
+    font-family: 'Source Sans 3', sans-serif;
+    font-weight: 700;
+    color: var(--blue);
+    font-size: 10pt;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    display: block;
+    margin-bottom: 8px;
+  }
+
+  /* ── Headings ── */
+  h2 {
+    font-family: 'Source Sans 3', sans-serif;
+    font-size: 14pt;
+    font-weight: 700;
+    color: var(--blue);
+    margin: 42px 0 7px;
+    padding-bottom: 7px;
+    border-bottom: 2px solid var(--bdr);
+  }
+  h3 {
+    font-family: 'Source Sans 3', sans-serif;
+    font-size: 11pt;
+    font-weight: 600;
+    color: #1e293b;
+    margin: 26px 0 9px;
+  }
+
+  p { margin-bottom: 14px; text-align: justify; }
+
+  /* ── Tables ── */
+  .tbl-wrap { overflow-x: auto; margin: 18px 0 6px; }
+  table { width: 100%; border-collapse: collapse; font-family: 'Source Sans 3', sans-serif; font-size: 9pt; }
+  thead tr { background: var(--blue); color: #fff; }
+  thead th { padding: 8px 12px; text-align: left; font-weight: 600; letter-spacing: .03em; }
+  tbody tr:nth-child(even) { background: #f0f5ff; }
+  tbody tr:nth-child(odd)  { background: var(--white); }
+  tbody tr:hover { background: #dbeafe; }
+  tbody td { padding: 7px 12px; border-bottom: 1px solid var(--bdr); }
+  tbody td:first-child { font-weight: 600; }
+  .tbl-cap {
+    font-family: 'Source Sans 3', sans-serif;
+    font-size: 8.5pt;
+    color: var(--lgray);
+    text-align: center;
+    margin: 4px 0 22px;
+    font-style: italic;
+  }
+
+  /* ── Code ── */
+  pre {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 8pt;
+    background: #1e2939;
+    color: #a5f3c0;
+    padding: 14px 18px;
+    border-radius: 8px;
+    margin: 12px 0 20px;
+    overflow-x: auto;
+    line-height: 1.65;
+  }
+  code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 8.5pt;
+    background: #f1f5f9;
+    color: #0f172a;
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+
+  /* ── Lists ── */
+  ul, ol { padding-left: 22px; margin-bottom: 14px; }
+  li { margin-bottom: 6px; line-height: 1.7; }
+
+  /* ── Callout ── */
+  .callout {
+    background: #f0fdf4;
+    border-left: 4px solid var(--teal);
+    border-radius: 0 8px 8px 0;
+    padding: 13px 19px;
+    margin: 16px 0 20px;
+    font-size: 9.5pt;
+    line-height: 1.7;
+  }
+  .callout strong { color: var(--teal); }
+
+  /* ── Figures ── */
+  figure { margin: 28px 0; text-align: center; }
+  figcaption {
+    font-family: 'Source Sans 3', sans-serif;
+    font-size: 8.5pt;
+    color: var(--lgray);
+    margin-top: 10px;
+    font-style: italic;
+    line-height: 1.5;
+  }
+  figcaption strong { font-style: normal; color: var(--gray); }
+
+  svg text { font-family: 'Source Sans 3', sans-serif; }
+
+  /* ── References ── */
+  .references ol { font-size: 9pt; color: var(--lgray); line-height: 1.65; }
+  .references li { margin-bottom: 7px; }
+
+  @media print {
+    body { background: white; }
+    .page { box-shadow: none; padding: 30px 52px; }
+    h2 { page-break-after: avoid; }
+    figure, table, pre { page-break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- TITLE -->
+  <h1 class="paper-title">PETase-ML: Using Machine Learning to Engineer<br>More Effective Plastic-Degrading Enzymes</h1>
+  <p class="authors">Los Altos Hacks Research Team</p>
+  <p class="affil">PET Enzyme Engineering Lab &nbsp;·&nbsp; 2026</p>
+  <hr class="divider">
+
+  <!-- ABSTRACT -->
+  <div class="abstract">
+    <span class="label">Abstract</span>
+    Plastic pollution is a massive, urgent problem, and PET plastic is one of the hardest materials
+    to break down. The bacterial enzyme IsPETase can degrade PET, but it unfolds at temperatures
+    too low for industrial use. We built PETase-ML, a machine learning platform that predicts
+    which mutations to a protein's amino acid sequence will make the enzyme more thermally stable.
+    We trained an ensemble of six gradient-boosted models on 17,791 experimentally measured mutations
+    from two public databases, then added a stacking meta-classifier that combines regression and
+    direct classification signals. We also incorporated two physics-based corrections —
+    one for salt concentration (Debye-Hückel theory) and one for calcium binding (Hill equation) —
+    so predictions adjust for real industrial conditions, not just lab buffers.
+    Our model reached 71.4% accuracy on binary stability classification with a Pearson correlation
+    of <em>r</em> = 0.63. The platform is deployed as a web app with an interactive 3D molecular viewer
+    and literature cross-referencing. We describe the full pipeline, what worked, what didn't,
+    and where we think the model still has room to improve.
+  </div>
+
+  <!-- 1. INTRODUCTION -->
+  <h2>1. Introduction</h2>
+
+  <h3>1.1 Why This Problem</h3>
+  <p>
+    We picked this project because the numbers around plastic waste are genuinely staggering.
+    About 380 million metric tons of plastic gets manufactured every year, and less than 10% is
+    ever recycled. PET specifically — the polymer in most water bottles and food packaging — can
+    persist in the environment for hundreds of years. It doesn't break down. It just accumulates.
+  </p>
+  <p>
+    In 2016, a research group in Japan discovered a bacterium called <em>Ideonella sakaiensis</em>
+    that could actually live on PET as its main food source (Yoshida et al., 2016). Its primary
+    enzyme, IsPETase, was the first enzyme found to meaningfully degrade PET at room temperature.
+    That discovery kicked off a wave of work trying to make the enzyme better — faster, more
+    stable, cheaper to produce.
+  </p>
+  <p>
+    The main bottleneck is temperature. IsPETase starts falling apart above roughly 40 °C, which
+    is a problem because PET's polymer chains only become flexible enough for enzymatic attack above
+    ~65 °C — its glass transition temperature. Getting the enzyme to work at 70 °C instead of 40 °C
+    isn't just a marginal improvement; it's the difference between an enzyme that degrades a few
+    percent of a PET sample in weeks versus one that can degrade 90% in a day.
+  </p>
+  <p>
+    Researchers have already made progress here. Lu et al. (2022) used machine learning to design
+    FAST-PETase, a five-mutation variant that works at room temperature. Tournier et al. (2020)
+    engineered LCC-ICCG, a thermophilic cutinase that degrades 90% of post-consumer PET in 10 hours
+    at 72 °C. Both of those studies required either structural modeling with expensive software
+    (Rosetta, FoldX) or large-scale wet lab screening. We wanted to ask: can a sequence-only
+    machine learning model get close to that level of prediction without needing a crystal structure?
+  </p>
+
+  <h3>1.2 What We Built</h3>
+  <p>
+    PETase-ML has three parts. First, an ML prediction model trained on real experimental
+    mutation data that predicts whether a given amino acid substitution will stabilise or destabilise
+    a protein. Second, a set of physics-based adjustments that correct predictions based on the
+    salt concentration and calcium content of the user's environment — because a mutation that
+    helps in a low-salt lab buffer might behave differently in industrial wastewater.
+    Third, a full web interface where a researcher can paste in any protein sequence, set their
+    assay conditions, and get back a ranked list of candidate mutations with predicted stability
+    scores, melting temperature changes, and cross-references to published experiments.
+  </p>
+
+  <!-- FIGURE 1 — PIPELINE -->
+  <figure>
+    <svg width="680" height="215" viewBox="0 0 680 215" xmlns="http://www.w3.org/2000/svg">
+      <rect width="680" height="215" rx="12" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1.5"/>
+      <defs>
+        <marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L8,3 z" fill="#1a4fa0"/>
+        </marker>
+      </defs>
+      <!-- Step 1 -->
+      <rect x="18" y="72" width="112" height="62" rx="8" fill="#1a4fa0"/>
+      <text x="74" y="97"  text-anchor="middle" fill="white"   font-size="9"  font-weight="bold">Protein</text>
+      <text x="74" y="110" text-anchor="middle" fill="white"   font-size="9"  font-weight="bold">Sequence</text>
+      <text x="74" y="124" text-anchor="middle" fill="#93c5fd" font-size="8">+ conditions</text>
+      <!-- Arrow -->
+      <line x1="131" y1="103" x2="152" y2="103" stroke="#1a4fa0" stroke-width="2" marker-end="url(#arr)"/>
+      <!-- Step 2 -->
+      <rect x="153" y="58" width="122" height="90" rx="8" fill="#eff6ff" stroke="#1a4fa0" stroke-width="1.5"/>
+      <text x="214" y="82"  text-anchor="middle" fill="#1a4fa0" font-size="9" font-weight="bold">Feature</text>
+      <text x="214" y="95"  text-anchor="middle" fill="#1a4fa0" font-size="9" font-weight="bold">Extraction</text>
+      <text x="214" y="112" text-anchor="middle" fill="#374151" font-size="8">76 features</text>
+      <text x="214" y="124" text-anchor="middle" fill="#374151" font-size="8">sequence-only</text>
+      <text x="214" y="136" text-anchor="middle" fill="#374151" font-size="8">no structure needed</text>
+      <!-- Arrow -->
+      <line x1="276" y1="103" x2="297" y2="103" stroke="#1a4fa0" stroke-width="2" marker-end="url(#arr)"/>
+      <!-- Step 3 -->
+      <rect x="298" y="38" width="132" height="130" rx="8" fill="#eff6ff" stroke="#1a4fa0" stroke-width="1.5"/>
+      <text x="364" y="60"  text-anchor="middle" fill="#1a4fa0" font-size="9"  font-weight="bold">ML Ensemble</text>
+      <text x="364" y="75"  text-anchor="middle" fill="#374151" font-size="7.5">6 regressors (OOF DDG)</text>
+      <text x="364" y="88"  text-anchor="middle" fill="#374151" font-size="7.5">3 direct classifiers</text>
+      <line x1="312" y1="97" x2="416" y2="97" stroke="#e2e8f0"/>
+      <text x="364" y="112" text-anchor="middle" fill="#0d9488" font-size="8"  font-weight="bold">Wide-Stack</text>
+      <text x="364" y="124" text-anchor="middle" fill="#374151" font-size="7.5">CatBoost meta-clf</text>
+      <text x="364" y="136" text-anchor="middle" fill="#374151" font-size="7.5">threshold sweep</text>
+      <line x1="312" y1="145" x2="416" y2="145" stroke="#e2e8f0"/>
+      <text x="364" y="158" text-anchor="middle" fill="#374151" font-size="7.5">5-fold honest CV</text>
+      <!-- Arrow -->
+      <line x1="431" y1="103" x2="452" y2="103" stroke="#1a4fa0" stroke-width="2" marker-end="url(#arr)"/>
+      <!-- Step 4 -->
+      <rect x="453" y="58" width="112" height="90" rx="8" fill="#f0fdf4" stroke="#0d9488" stroke-width="1.5"/>
+      <text x="509" y="82"  text-anchor="middle" fill="#0d9488" font-size="9"  font-weight="bold">Physics</text>
+      <text x="509" y="95"  text-anchor="middle" fill="#0d9488" font-size="9"  font-weight="bold">Corrections</text>
+      <text x="509" y="112" text-anchor="middle" fill="#374151" font-size="8">Debye-Hückel</text>
+      <text x="509" y="124" text-anchor="middle" fill="#374151" font-size="8">ionic strength</text>
+      <text x="509" y="136" text-anchor="middle" fill="#374151" font-size="8">Ca²⁺ binding</text>
+      <!-- Arrow -->
+      <line x1="566" y1="103" x2="587" y2="103" stroke="#1a4fa0" stroke-width="2" marker-end="url(#arr)"/>
+      <!-- Step 5 -->
+      <rect x="588" y="65" width="78" height="76" rx="8" fill="#1a4fa0"/>
+      <text x="627" y="91"  text-anchor="middle" fill="white"   font-size="9"  font-weight="bold">Ranked</text>
+      <text x="627" y="104" text-anchor="middle" fill="white"   font-size="9"  font-weight="bold">Candidates</text>
+      <text x="627" y="120" text-anchor="middle" fill="#93c5fd" font-size="8">DDG · DTm</text>
+      <text x="627" y="132" text-anchor="middle" fill="#93c5fd" font-size="8">literature</text>
+      <!-- Step labels -->
+      <text x="74"  y="150" text-anchor="middle" fill="#6b7280" font-size="7.5">Input</text>
+      <text x="214" y="162" text-anchor="middle" fill="#6b7280" font-size="7.5">Features</text>
+      <text x="364" y="182" text-anchor="middle" fill="#6b7280" font-size="7.5">Prediction</text>
+      <text x="509" y="162" text-anchor="middle" fill="#6b7280" font-size="7.5">Correction</text>
+      <text x="627" y="154" text-anchor="middle" fill="#6b7280" font-size="7.5">Output</text>
+      <text x="340" y="206" text-anchor="middle" fill="#6b7280" font-size="8" font-style="italic">
+        Figure 1. The full prediction pipeline from input sequence to ranked mutant candidates.
+      </text>
+    </svg>
+  </figure>
+
+  <!-- 2. DATA -->
+  <h2>2. Training Data</h2>
+
+  <h3>2.1 Where the Data Came From</h3>
+  <p>
+    One of the first things we learned was that data quality matters more than data quantity. We
+    decided early on to use only real experimental measurements — no computationally predicted
+    stability values, no synthetic augmentation from Rosetta or FoldX. The reasoning was
+    straightforward: a model trained on computational predictions would just be learning to mimic
+    another model's errors, not real biophysics.
+  </p>
+  <p>
+    We drew from two databases. <strong>FireProtDB</strong> provided 3,438 curated mutations with
+    experimentally measured ΔΔG values and the exact assay conditions (temperature and pH) used
+    in the original experiments. <strong>ThermoMutDB</strong> contributed 10,993 more mutations
+    across 249 distinct protein families. After merging and removing duplicates — same protein,
+    same position, same wild-type and mutant amino acids — we had 8,925 unique mutations. We then
+    removed 20 entries where |ΔΔG| exceeded 10 kcal/mol, because values that extreme almost always
+    indicate measurement error or protein aggregation rather than real single-mutation effects.
+    That left us with <strong>8,905 clean training examples</strong>.
+  </p>
+
+  <h3>2.2 Doubling the Dataset for Free</h3>
+  <p>
+    Thermodynamics gives us a useful identity: the destabilisation caused by mutation A→B is equal
+    and opposite to the stabilisation of the reverse mutation B→A. In equation form:
+  </p>
+  <pre>DDG(A → B)  =  −DDG(B → A)</pre>
+  <p>
+    We used this to generate a reverse mutation for every entry in our dataset. After removing any
+    reverse mutations that were already present in the original data, we ended up with
+    <strong>17,791 total samples</strong>. This is a legitimate augmentation — we're not guessing
+    stability values, we're applying a thermodynamic identity that holds exactly in theory and
+    approximately in practice. That distinction matters: the augmented examples carry real physical
+    meaning.
+  </p>
+
+  <div class="callout">
+    <strong>Why near-equal class balance matters:</strong> After augmentation, we had 8,780 stabilising
+    mutations (49.3%) and 9,011 destabilising (50.7%). This near-perfect balance means we don't
+    need any resampling tricks, and accuracy is a valid metric — a model can't get to 70%+ just
+    by predicting the majority class.
+  </div>
+
+  <!-- 3. FEATURES -->
+  <h2>3. Feature Engineering</h2>
+
+  <h3>3.1 Representing a Mutation as a Number</h3>
+  <p>
+    The central challenge in this kind of problem is turning a biological event — "amino acid serine
+    at position 121 was replaced by glutamate" — into something a gradient-boosted tree can work
+    with. We can't feed it a protein sequence directly; we need numbers. We ended up with a
+    76-dimensional feature vector for each mutation, computed entirely from the amino acid
+    sequence and the assay conditions. No crystal structure required.
+  </p>
+  <p>
+    That sequence-only constraint was a deliberate choice. Many of the most interesting proteins
+    being studied today — including newly discovered plastic-degrading enzymes from environmental
+    metagenomics — don't have crystal structures yet. A model that needs 3D coordinates is useless
+    for those. Our model works on any protein you can express as a FASTA sequence.
+  </p>
+
+  <h3>3.2 Feature Groups</h3>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>Group</th><th>Features</th><th>What It Captures</th></tr></thead>
+    <tbody>
+      <tr><td>Physicochemical deltas</td><td>6</td><td>Differences in hydrophobicity, size, charge, flexibility, and secondary structure propensity between WT and mutant amino acid</td></tr>
+      <tr><td>Absolute deltas</td><td>6</td><td>Magnitudes of the above — how disruptive the change is, regardless of direction</td></tr>
+      <tr><td>BLOSUM62</td><td>1</td><td>Evolutionary substitution probability — low score means evolution rarely tolerates this swap</td></tr>
+      <tr><td>Secondary structure</td><td>3</td><td>Estimated helix/sheet/coil fraction at position using sliding-window propensity scores</td></tr>
+      <tr><td>Solvent exposure (RSA)</td><td>1</td><td>Whether the residue is buried in the core or exposed to solvent, estimated from sequence</td></tr>
+      <tr><td>Sequence context</td><td>4</td><td>Local hydrophobicity/charge in a 7-residue window, glycine/proline fraction, relative position</td></tr>
+      <tr><td>Assay conditions</td><td>2</td><td>Experimental temperature (°C) and pH, read directly from the database record</td></tr>
+      <tr><td>Extended biochemical</td><td>18</td><td>Molecular weight delta, H-bond donors/acceptors, pKa shift, aliphatic index, disorder proxy, Cys distance</td></tr>
+      <tr><td>Cross-terms</td><td>8</td><td>Products of condition and structural variables (see below)</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="tbl-cap">Table 1. Summary of the 76 feature groups. All computed from sequence and assay conditions alone.</p>
+
+  <h3>3.3 Cross-Term Features</h3>
+  <p>
+    Standard features describe properties of the mutation in isolation. Cross-terms describe how
+    those properties interact. A hydrophobic mutation in the buried core is more destabilising
+    than the same mutation on the surface — not because of the charge or size alone, but because of
+    where the mutation is. A charge-changing mutation matters more at high pH (where ionisation
+    states shift) than at neutral pH. These are interactions that any linear model would miss,
+    so we computed eight physically motivated cross-term features explicitly:
+  </p>
+
+  <figure>
+    <svg width="640" height="186" viewBox="0 0 640 186" xmlns="http://www.w3.org/2000/svg">
+      <rect width="640" height="186" rx="10" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1.5"/>
+      <!-- 4 boxes -->
+      <rect x="16"  y="22" width="138" height="118" rx="8" fill="#eff6ff" stroke="#1a4fa0" stroke-width="1.5"/>
+      <text x="85"  y="44"  text-anchor="middle" fill="#1a4fa0" font-size="9" font-weight="bold">DH × Temperature</text>
+      <line x1="26" y1="52" x2="144" y2="52" stroke="#e2e8f0"/>
+      <text x="85"  y="68"  text-anchor="middle" fill="#374151" font-size="8">Hydrophobic burial</text>
+      <text x="85"  y="80"  text-anchor="middle" fill="#374151" font-size="8">stabilises more at</text>
+      <text x="85"  y="92"  text-anchor="middle" fill="#374151" font-size="8">high temperature</text>
+      <text x="85"  y="108" text-anchor="middle" fill="#374151" font-size="8">(entropic effect)</text>
+      <text x="85"  y="128" text-anchor="middle" fill="#0d9488" font-size="7.5" font-style="italic">Entropy-enthalpy</text>
+
+      <rect x="170" y="22" width="138" height="118" rx="8" fill="#eff6ff" stroke="#1a4fa0" stroke-width="1.5"/>
+      <text x="239" y="44"  text-anchor="middle" fill="#1a4fa0" font-size="9" font-weight="bold">DC × Burial (RSA)</text>
+      <line x1="180" y1="52" x2="298" y2="52" stroke="#e2e8f0"/>
+      <text x="239" y="68"  text-anchor="middle" fill="#374151" font-size="8">Charged residue</text>
+      <text x="239" y="80"  text-anchor="middle" fill="#374151" font-size="8">in the core incurs</text>
+      <text x="239" y="92"  text-anchor="middle" fill="#374151" font-size="8">a large desolvation</text>
+      <text x="239" y="104" text-anchor="middle" fill="#374151" font-size="8">energy penalty</text>
+      <text x="239" y="128" text-anchor="middle" fill="#0d9488" font-size="7.5" font-style="italic">Desolvation penalty</text>
+
+      <rect x="324" y="22" width="138" height="118" rx="8" fill="#f0fdf4" stroke="#0d9488" stroke-width="1.5"/>
+      <text x="393" y="44"  text-anchor="middle" fill="#0d9488" font-size="9" font-weight="bold">DH × Burial</text>
+      <line x1="334" y1="52" x2="452" y2="52" stroke="#e2e8f0"/>
+      <text x="393" y="68"  text-anchor="middle" fill="#374151" font-size="8">Hydrophobic change</text>
+      <text x="393" y="80"  text-anchor="middle" fill="#374151" font-size="8">matters far more</text>
+      <text x="393" y="92"  text-anchor="middle" fill="#374151" font-size="8">in the packed core</text>
+      <text x="393" y="104" text-anchor="middle" fill="#374151" font-size="8">than on the surface</text>
+      <text x="393" y="128" text-anchor="middle" fill="#0d9488" font-size="7.5" font-style="italic">Core packing depth</text>
+
+      <rect x="478" y="22" width="146" height="118" rx="8" fill="#f0fdf4" stroke="#0d9488" stroke-width="1.5"/>
+      <text x="551" y="44"  text-anchor="middle" fill="#0d9488" font-size="9" font-weight="bold">Burial × DC at pH</text>
+      <line x1="488" y1="52" x2="614" y2="52" stroke="#e2e8f0"/>
+      <text x="551" y="68"  text-anchor="middle" fill="#374151" font-size="8">pH shifts ionisation;</text>
+      <text x="551" y="80"  text-anchor="middle" fill="#374151" font-size="8">structural burial</text>
+      <text x="551" y="92"  text-anchor="middle" fill="#374151" font-size="8">amplifies that effect</text>
+      <text x="551" y="104" text-anchor="middle" fill="#374151" font-size="8">significantly</text>
+      <text x="551" y="128" text-anchor="middle" fill="#0d9488" font-size="7.5" font-style="italic">pH-burial coupling</text>
+
+      <text x="320" y="176" text-anchor="middle" fill="#6b7280" font-size="8" font-style="italic">
+        Figure 2. Four of the eight cross-term features. Each captures a physical interaction that additive features miss.
+      </text>
+    </svg>
+  </figure>
+
+  <!-- 4. MODEL -->
+  <h2>4. The Prediction Model</h2>
+
+  <h3>4.1 Why an Ensemble?</h3>
+  <p>
+    No single gradient-boosted model consistently wins on this kind of structured biological data.
+    Different algorithms make different bias-variance tradeoffs: XGBoost handles deep trees with
+    strong regularisation, LightGBM is fast on the histogram approximation, CatBoost handles
+    symmetric trees well. We found that averaging the outputs of six independently tuned models
+    reduced error more reliably than trying to squeeze extra performance from any one of them.
+    The MLP adds a completely different kind of inductive bias — a fully connected neural network
+    that can learn arbitrary non-linear combinations — which helps even when its individual
+    accuracy is lower than the tree models.
+  </p>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>Model</th><th>Type</th><th>Tuning Strategy</th></tr></thead>
+    <tbody>
+      <tr><td>GradientBoostingRegressor</td><td>Sequential trees, Huber loss</td><td>Default hyperparameters</td></tr>
+      <tr><td>XGBRegressor</td><td>Regularised boosting</td><td>50-trial Optuna search on 5k subsample</td></tr>
+      <tr><td>LGBMRegressor</td><td>Histogram-based boosting</td><td>50-trial Optuna search on 5k subsample</td></tr>
+      <tr><td>CatBoostRegressor</td><td>Symmetric tree boosting</td><td>30-trial Optuna search on 5k subsample</td></tr>
+      <tr><td>HistGradientBoosting</td><td>Sklearn native histogram</td><td>Default hyperparameters</td></tr>
+      <tr><td>MLPRegressor</td><td>256-128-64 neural network</td><td>Early stopping on validation loss</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="tbl-cap">Table 2. Base ensemble models. Optuna tunes on a 5,000-sample subsample for speed; final training uses all 17,791 examples.</p>
+
+  <h3>4.2 10-Fold Cross-Validation Results</h3>
+  <p>
+    We evaluated each model with 10-fold cross-validation, which means each sample was predicted
+    exactly once by a model that never trained on it. The results are honest estimates of how the
+    model generalises to new data:
+  </p>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>Model</th><th>MAE (kcal/mol)</th><th>Pearson r</th><th>Spearman rho</th><th>Binary Acc.</th></tr></thead>
+    <tbody>
+      <tr><td>GradientBoosting</td><td>1.278</td><td>0.541</td><td>0.520</td><td>69.2%</td></tr>
+      <tr><td>XGBoost</td><td>1.243</td><td>0.578</td><td>0.555</td><td>70.4%</td></tr>
+      <tr><td>LightGBM</td><td>1.250</td><td>0.573</td><td>0.550</td><td>70.1%</td></tr>
+      <tr><td>CatBoost</td><td>1.245</td><td>0.556</td><td>0.542</td><td>70.5%</td></tr>
+      <tr><td>HistGradientBoosting</td><td>1.265</td><td>0.541</td><td>0.534</td><td>69.9%</td></tr>
+      <tr><td>MLP</td><td>1.336</td><td>0.515</td><td>0.487</td><td>66.9%</td></tr>
+      <tr><td><strong>Ensemble avg</strong></td><td><strong>1.248</strong></td><td><strong>0.568</strong></td><td><strong>0.549</strong></td><td><strong>70.4%</strong></td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="tbl-cap">Table 3. 10-fold CV results. An MAE of ~1.25 kcal/mol on a ±10 kcal/mol range is competitive with published sequence-only DDG predictors.</p>
+
+  <!-- FIGURE 3 — Feature importance -->
+  <figure>
+    <svg width="640" height="255" viewBox="0 0 640 255" xmlns="http://www.w3.org/2000/svg">
+      <rect width="640" height="255" rx="10" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1.5"/>
+      <text x="320" y="22" text-anchor="middle" fill="#1a4fa0" font-size="10" font-weight="bold">Top 10 Feature Importances (Averaged Across Ensemble)</text>
+
+      <!-- Bars: x=140 to x=580, so 440px wide. Max val=341. Scale=440/341=1.29 px per unit -->
+      <g>
+        <text x="135" y="50"  text-anchor="end" fill="#374151" font-size="8">temperature_C</text>
+        <rect  x="140" y="38" width="440" height="16" rx="3" fill="#1a4fa0" opacity=".9"/>
+        <text  x="586" y="50" fill="#374151" font-size="8">341</text>
+
+        <text x="135" y="72"  text-anchor="end" fill="#374151" font-size="8">pH</text>
+        <rect  x="140" y="60" width="378" height="16" rx="3" fill="#1a4fa0" opacity=".8"/>
+        <text  x="524" y="72" fill="#374151" font-size="8">293</text>
+
+        <text x="135" y="94"  text-anchor="end" fill="#374151" font-size="8">RSA (solvent exposure)</text>
+        <rect  x="140" y="82" width="336" height="16" rx="3" fill="#2563eb" opacity=".85"/>
+        <text  x="482" y="94" fill="#374151" font-size="8">261</text>
+
+        <text x="135" y="116" text-anchor="end" fill="#374151" font-size="8">dH x temperature</text>
+        <rect  x="140" y="104" width="324" height="16" rx="3" fill="#0d9488" opacity=".85"/>
+        <text  x="470" y="116" fill="#374151" font-size="8">252</text>
+
+        <text x="135" y="138" text-anchor="end" fill="#374151" font-size="8">rel_position</text>
+        <rect  x="140" y="126" width="281" height="16" rx="3" fill="#2563eb" opacity=".75"/>
+        <text  x="427" y="138" fill="#374151" font-size="8">218</text>
+
+        <text x="135" y="160" text-anchor="end" fill="#374151" font-size="8">delta_ionization (pH)</text>
+        <rect  x="140" y="148" width="267" height="16" rx="3" fill="#0d9488" opacity=".75"/>
+        <text  x="413" y="160" fill="#374151" font-size="8">207</text>
+
+        <text x="135" y="182" text-anchor="end" fill="#374151" font-size="8">nearest_cys_dist</text>
+        <rect  x="140" y="170" width="254" height="16" rx="3" fill="#2563eb" opacity=".7"/>
+        <text  x="400" y="182" fill="#374151" font-size="8">197</text>
+
+        <text x="135" y="204" text-anchor="end" fill="#374151" font-size="8">dAliphatic x temp</text>
+        <rect  x="140" y="192" width="237" height="16" rx="3" fill="#0d9488" opacity=".7"/>
+        <text  x="383" y="204" fill="#374151" font-size="8">184</text>
+
+        <text x="135" y="226" text-anchor="end" fill="#374151" font-size="8">burial x dCharge(pH)</text>
+        <rect  x="140" y="214" width="222" height="16" rx="3" fill="#0d9488" opacity=".65"/>
+        <text  x="368" y="226" fill="#374151" font-size="8">172</text>
+      </g>
+
+      <!-- Legend -->
+      <rect x="460" y="160" width="10" height="10" rx="2" fill="#1a4fa0"/>
+      <text x="474" y="169" fill="#374151" font-size="7.5">Assay conditions</text>
+      <rect x="460" y="175" width="10" height="10" rx="2" fill="#0d9488"/>
+      <text x="474" y="184" fill="#374151" font-size="7.5">Cross-term features</text>
+      <rect x="460" y="190" width="10" height="10" rx="2" fill="#2563eb"/>
+      <text x="474" y="199" fill="#374151" font-size="7.5">Structural features</text>
+
+      <text x="320" y="248" text-anchor="middle" fill="#6b7280" font-size="8" font-style="italic">
+        Figure 3. Assay conditions (temperature, pH) rank first and second — which validates including them as features.
+        Cross-terms (teal) appear frequently, confirming the value of capturing non-linear couplings explicitly.
+      </text>
+    </svg>
+  </figure>
+
+  <h3>4.3 The Wide-Stack Meta-Classifier</h3>
+  <p>
+    One thing we noticed early on: the base models were all doing regression — predicting a
+    continuous ΔΔG value, then thresholding at zero to get a binary stabilising/destabilising
+    label. But minimising mean absolute error on ΔΔG isn't the same as maximising binary
+    classification accuracy. You can have a model with great MAE that still gets the sign wrong
+    on a lot of borderline mutations.
+  </p>
+  <p>
+    So we added three direct binary classifiers (XGBClassifier, LGBMClassifier, CatBoostClassifier)
+    trained on the binary label directly. These optimise accuracy from the start. We then built
+    a wide 9-feature meta-learner input from: the 6 regressor out-of-fold (OOF) predictions +
+    the 3 classifier OOF probabilities. A CatBoost classifier meta-learner trained on this
+    combined input picks up signal from both the regression and classification branches.
+  </p>
+
+  <figure>
+    <svg width="640" height="225" viewBox="0 0 640 225" xmlns="http://www.w3.org/2000/svg">
+      <rect width="640" height="225" rx="10" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1.5"/>
+      <defs>
+        <marker id="arr2" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L8,3 z" fill="#1a4fa0"/>
+        </marker>
+      </defs>
+      <!-- Left block: regressors -->
+      <text x="90" y="18" text-anchor="middle" fill="#1a4fa0" font-size="9" font-weight="bold">Level 1 — Regressors</text>
+      <rect x="10" y="26" width="160" height="130" rx="8" fill="#eff6ff" stroke="#1a4fa0" stroke-width="1.5"/>
+      <text x="90" y="46"  text-anchor="middle" fill="#374151" font-size="8">GBM</text>
+      <text x="90" y="60"  text-anchor="middle" fill="#374151" font-size="8">XGBoost</text>
+      <text x="90" y="74"  text-anchor="middle" fill="#374151" font-size="8">LightGBM</text>
+      <text x="90" y="88"  text-anchor="middle" fill="#374151" font-size="8">CatBoost</text>
+      <text x="90" y="102" text-anchor="middle" fill="#374151" font-size="8">HistGBM</text>
+      <text x="90" y="116" text-anchor="middle" fill="#374151" font-size="8">MLP</text>
+      <rect x="28" y="126" width="124" height="20" rx="4" fill="#dbeafe"/>
+      <text x="90" y="139" text-anchor="middle" fill="#1a4fa0" font-size="8" font-weight="bold">6 OOF DDG predictions</text>
+      <!-- Right block: classifiers -->
+      <text x="380" y="18" text-anchor="middle" fill="#0d9488" font-size="9" font-weight="bold">Level 1 — Direct Classifiers</text>
+      <rect x="270" y="26" width="220" height="130" rx="8" fill="#f0fdf4" stroke="#0d9488" stroke-width="1.5"/>
+      <text x="380" y="50"  text-anchor="middle" fill="#374151" font-size="8">XGBClassifier</text>
+      <text x="380" y="66"  text-anchor="middle" fill="#374151" font-size="8">LGBMClassifier</text>
+      <text x="380" y="82"  text-anchor="middle" fill="#374151" font-size="8">CatBoostClassifier</text>
+      <text x="380" y="100" text-anchor="middle" fill="#6b7280" font-size="7.5" font-style="italic">trained on binary labels directly</text>
+      <text x="380" y="112" text-anchor="middle" fill="#6b7280" font-size="7.5" font-style="italic">— not regression then threshold</text>
+      <rect x="290" y="126" width="180" height="20" rx="4" fill="#d1fae5"/>
+      <text x="380" y="139" text-anchor="middle" fill="#0d9488" font-size="8" font-weight="bold">3 OOF class probabilities</text>
+      <!-- Arrows to meta -->
+      <line x1="170" y1="136" x2="492" y2="174" stroke="#1a4fa0" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arr2)"/>
+      <line x1="490" y1="136" x2="510" y2="168" stroke="#0d9488" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arr2)"/>
+      <!-- Meta box -->
+      <rect x="495" y="160" width="132" height="46" rx="8" fill="#1a4fa0"/>
+      <text x="561" y="180" text-anchor="middle" fill="white"   font-size="9" font-weight="bold">CatBoost Meta-Clf</text>
+      <text x="561" y="194" text-anchor="middle" fill="#93c5fd" font-size="8">9-feature wide stack</text>
+      <text x="561" y="206" text-anchor="middle" fill="#93c5fd" font-size="7.5">threshold sweep [0.3–0.7]</text>
+      <text x="320" y="218" text-anchor="middle" fill="#6b7280" font-size="8" font-style="italic">
+        Figure 4. Two-level stacking architecture. The meta-classifier combines regressor DDG output with direct binary classifier probabilities.
+      </text>
+    </svg>
+  </figure>
+
+  <h3>4.4 Leave-One-Protein-Out Validation</h3>
+  <p>
+    Standard 10-fold CV shuffles mutations randomly across folds, so the same protein can appear
+    in both training and test. That's a problem because our model might learn protein-specific
+    patterns (a specific protein family's average stability) rather than general mutation effects.
+    Leave-one-protein-out (LOPO) CV fixes this by holding out every mutation from one protein
+    at a time. It's a harder test, and the numbers reflect that:
+  </p>
+  <ul>
+    <li>LOPO MAE: 1.363 kcal/mol (vs. 1.25 in standard CV)</li>
+    <li>LOPO Pearson r: 0.448</li>
+    <li>LOPO Binary Accuracy: 66.0%</li>
+  </ul>
+  <p>
+    The drop from 70.4% to 66.0% tells us that about 4% of our accuracy comes from
+    within-protein generalisation — the model picking up on a specific protein family's behaviour
+    rather than universal mutation physics. We think that's actually a reasonable number given
+    that protein families do have real shared behaviours that a model should capture.
+  </p>
+
+  <!-- 5. PHYSICS -->
+  <h2>5. Physics-Based Condition Corrections</h2>
+
+  <h3>5.1 Why Conditions Matter</h3>
+  <p>
+    A ΔΔG value measured in a 50 mM NaCl buffer at pH 7 is not the same as one measured in
+    industrial wastewater with 500 mM NaCl at pH 9. Ionic strength changes how charged residues
+    interact with each other. Calcium concentration matters for cutinase-family enzymes (like LCC)
+    that have a calcium binding site critical for thermostability. Our model's training data
+    includes temperature and pH as features, so it handles those natively. But ionic strength and
+    calcium concentration required explicit physics models, because our training data doesn't have
+    enough variation in those conditions to learn from.
+  </p>
+
+  <h3>5.2 Debye-Hückel Ionic Strength Correction</h3>
+  <p>
+    When you dissolve NaCl in water, the Na⁺ and Cl⁻ ions form an ionic atmosphere around any
+    charged surface residues, partially cancelling out their electrostatic effects. The higher the
+    salt concentration, the more screening, and the less a charge-changing mutation actually matters.
+    We implemented this using Debye-Hückel theory (Tanford, 1961):
+  </p>
+  <pre>Screening length:   kappa (1/nm) = sqrt(I_molar / 0.304)
+Screening factor:   exp(−kappa × r_contact)   [r_contact = 0.4 nm]
+Score adjustment:   delta_charge × RSA × delta_screening × 0.12</pre>
+  <p>
+    We only apply this correction to surface-exposed residues (estimated RSA > 0.25) that undergo
+    a charge change. Buried charged residues are shielded by the protein's own dielectric and
+    don't respond much to bulk salt concentration. The correction is capped at ±0.15 score units
+    to keep it from dominating the ML prediction.
+  </p>
+
+  <h3>5.3 Ca²⁺ Binding Correction</h3>
+  <p>
+    This one only applies to cutinase-family enzymes (LCC, TfCut2, Cut190) that have a conserved
+    calcium binding site in their N-terminal region. Calcium coordination contributes significantly
+    to the folding free energy of these enzymes, so mutations that change chelating residues
+    (Asp/Glu) near that site affect stability in a calcium-dependent way. We modelled this with
+    a one-site Hill equation:
+  </p>
+  <pre>Occupancy:      f = [Ca2+] / (Kd + [Ca2+])     Kd = 0.5 mM
+Correction:     −DDG_max × (f_mutant − f_wildtype)     DDG_max = 2.0 kcal/mol</pre>
+  <p>
+    We won't claim this is a perfect model — the actual binding thermodynamics are more complex —
+    but it correctly captures the sign and approximate magnitude of the effect for the residues
+    most relevant to cutinase thermostability.
+  </p>
+
+  <!-- 6. CANDIDATE GENERATION -->
+  <h2>6. Generating Mutation Candidates</h2>
+  <p>
+    Given a query sequence, we evaluate every possible single amino acid substitution at every
+    non-catalytic position. For a typical 290-residue enzyme like IsPETase, that's roughly
+    5,500 mutations to score. We exclude the catalytic triad (Ser160, His206, Asp208) because
+    any mutation there would destroy enzyme activity — there's no point predicting stability
+    improvements that break the active site.
+  </p>
+  <p>
+    From the top single mutations, we build multi-mutant candidates by combining up to six
+    beneficial single mutations. This assumes that ΔΔG contributions are roughly additive across
+    non-interacting residues — a simplification that works reasonably well when the mutation
+    sites are spatially distant, but can break down for nearby residues or those in the same
+    structural element. That's a known limitation we flag in the output.
+  </p>
+  <p>
+    Each final candidate gets three scores: a stability score from the stacking ensemble, an
+    activity score based on proximity to the catalytic triad (we prefer mutations far from active
+    site residues), and a predicted ΔTm from a separate regressor trained on 4,953 melting
+    temperature measurements from ThermoMutDB (MAE = 4.6 °C, Pearson r = 0.526).
+  </p>
+
+  <!-- 7. RESULTS -->
+  <h2>7. Results</h2>
+
+  <h3>7.1 Overall Performance</h3>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>Metric</th><th>Value</th><th>What It Means</th></tr></thead>
+    <tbody>
+      <tr><td>MAE (stacking)</td><td>1.177 kcal/mol</td><td>Average error on DDG prediction</td></tr>
+      <tr><td>Pearson r</td><td>0.631</td><td>Linear correlation between predicted and measured DDG</td></tr>
+      <tr><td>Binary accuracy</td><td>71.4%</td><td>Correctly classifying stabilising vs. destabilising</td></tr>
+      <tr><td>F1 score</td><td>0.715</td><td>Balanced precision-recall</td></tr>
+      <tr><td>LOPO accuracy</td><td>66.0%</td><td>Performance on completely unseen protein families</td></tr>
+      <tr><td>DTm MAE</td><td>4.6 °C</td><td>Melting temperature change prediction error</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="tbl-cap">Table 4. Summary of final model performance on held-out cross-validation data.</p>
+
+  <h3>7.2 What the Feature Importances Taught Us</h3>
+  <p>
+    The most useful finding from the feature importance analysis (Figure 3) was that assay
+    conditions — temperature and pH — ranked first and second across the entire ensemble. We were
+    a little surprised by how strongly they dominated. What this tells us is that a significant
+    fraction of the variance in ΔΔG values in our training data comes from the measurement
+    conditions, not just the mutations themselves. Including them as features was the right call,
+    but it also means that predictions made without specifying conditions (e.g., just assuming
+    25 °C, pH 7) could be considerably off for mutations whose effects are strongly
+    temperature-dependent.
+  </p>
+  <p>
+    The cross-term features (teal in Figure 3) show up frequently in the top 10, particularly
+    ΔHydrophobicity × temperature and burial × ΔCharge. We took this as confirmation that
+    computing those interactions explicitly — rather than hoping the gradient-boosted trees
+    would discover them — was worthwhile. The burial × ΔCharge feature alone captures the core
+    physics of why charged mutations in hydrophobic cores are so destabilising.
+  </p>
+
+  <h3>7.3 Limitations</h3>
+  <p>
+    We want to be straightforward about where this model falls short. The biggest gap is the
+    absence of structural information. Methods like FoldX and Rosetta compute explicit van der
+    Waals contacts, hydrogen bond geometries, and solvation energies from 3D coordinates.
+    Our sequence-only RSA and secondary structure estimates are averages — they reflect the
+    statistical tendency of residues at a given type of position, not the actual geometry of
+    any specific protein.
+  </p>
+  <p>
+    PSSM features (evolutionary conservation profiles from BLAST alignments) are not available
+    in the current deployment. Based on published comparisons of similar models (Montanucci et al.,
+    2019), we estimate these could add 2–4% accuracy. Generating them requires running BLAST
+    searches for each new protein, which takes several minutes per protein — too slow for a
+    real-time web interface. Pre-computing PSSM profiles for common enzyme families is on our
+    list for a future version.
+  </p>
+  <p>
+    We also can't rule out that some of our accuracy comes from data leakage through the
+    antisymmetry augmentation. If both a forward and reverse mutation from the same protein
+    end up in the same CV fold, the model might learn protein-specific offsets rather than
+    general mutation physics. We took care to deduplicate, but the LOPO CV is the more honest
+    number for generalisation.
+  </p>
+
+  <!-- 8. SYSTEM -->
+  <h2>8. System and Interface</h2>
+  <p>
+    The back-end is a FastAPI Python service that loads all trained models (six regressors,
+    three classifiers, meta-learner, ΔTm regressor, and feature scaler) into memory at startup.
+    A full optimisation run — exhaustive single-mutation scan followed by multi-mutant candidate
+    assembly and ranking — takes 2–4 seconds on a single CPU.
+  </p>
+  <p>
+    The front-end is a React web application with a 3Dmol.js interactive 3D molecular viewer
+    showing the IsPETase crystal structure (PDB: 5XJH). Mutation sites are highlighted as
+    green spheres on the backbone. The guided tour animates the camera through each mutation
+    site, and we spent a meaningful amount of time making sure that animation was actually smooth.
+    The fix that worked was baking all geometry (atom positions, bond representations, sphere
+    overlays) to GPU memory once at tour start, then making each subsequent tour step a
+    pure camera move with no geometry rebuild. Calling <code>setStyle()</code> during an active
+    camera animation rebuilds all vertex buffer objects mid-frame, which causes the stutter
+    we were seeing.
+  </p>
+
+  <!-- 9. CONCLUSION -->
+  <h2>9. Conclusion</h2>
+  <p>
+    We built a system that takes a protein sequence, predicts which single amino acid substitutions
+    will improve thermal stability, generates multi-mutant combinations, corrects for real assay
+    conditions, and presents everything in a usable web interface. The model achieves 71.4% binary
+    classification accuracy using only sequence-derived features — no crystal structure, no
+    homology model, no FoldX.
+  </p>
+  <p>
+    That 71.4% is not the final word. The LOPO cross-validation number (66%) is probably closer
+    to what you'd see on a completely novel protein family. Adding PSSM features and AlphaFold2
+    predicted structures would likely push accuracy higher. But we think the current model is
+    already useful as a first-pass filter: if you have 10,000 possible mutations and you want to
+    narrow down to 50 for wet lab validation, a model with 71% accuracy can cut the search space
+    dramatically even if it isn't perfect.
+  </p>
+  <p>
+    The broader goal is to make tools like this accessible to researchers who don't have access
+    to computational biology infrastructure. If a lab working on a new plastic-degrading enzyme
+    can paste in a sequence, set their temperature and salt conditions, and get back a ranked
+    list of candidates in a few seconds, that changes what's feasible for a small research group.
+    That's what we were trying to build.
+  </p>
+
+  <!-- REFERENCES -->
+  <h2>References</h2>
+  <div class="references">
+  <ol>
+    <li>Yoshida S. et al. (2016). A bacterium that degrades and assimilates poly(ethylene terephthalate). <em>Science</em>, 351(6278), 1196–1199.</li>
+    <li>Tournier V. et al. (2020). An engineered PET depolymerase to break down and recycle plastic bottles. <em>Nature</em>, 580(7802), 216–219.</li>
+    <li>Lu H. et al. (2022). Machine learning-aided engineering of hydrolases for PET depolymerization. <em>Nature</em>, 604(7907), 662–667.</li>
+    <li>Joo S. et al. (2018). Structural insight into molecular mechanism of poly(ethylene terephthalate) degradation. <em>Nature Communications</em>, 9(1), 382.</li>
+    <li>Sulaiman S. et al. (2012). Isolation of a novel cutinase homolog with PET-degrading activity from leaf-branch compost. <em>Journal of Bacteriology</em>, 194(24), 6759–6765.</li>
+    <li>Montanucci L. et al. (2019). Predicting and interpreting large-scale mutagenesis data using protein stability and conservation. <em>Cell Reports</em>, 28(6), 1541–1553.</li>
+    <li>Tanford C. (1961). <em>Physical Chemistry of Macromolecules</em>. Wiley.</li>
+    <li>Youden W.J. (1950). Index for rating diagnostic tests. <em>Cancer</em>, 3(1), 32–35.</li>
+    <li>Chen T. &amp; Guestrin C. (2016). XGBoost: A scalable tree boosting system. <em>KDD '16</em>, 785–794.</li>
+    <li>Ke G. et al. (2017). LightGBM: A highly efficient gradient boosting decision tree. <em>NeurIPS 30</em>.</li>
+    <li>Prokhorenkova L. et al. (2018). CatBoost: unbiased boosting with categorical features. <em>NeurIPS 31</em>.</li>
+    <li>Akiba T. et al. (2019). Optuna: A next-generation hyperparameter optimization framework. <em>KDD '19</em>, 2623–2631.</li>
+    <li>Berman H.M. et al. (2000). The Protein Data Bank. <em>Nucleic Acids Research</em>, 28(1), 235–242.</li>
+  </ol>
+  </div>
+
+  <hr class="divider" style="margin-top:44px">
+  <p style="text-align:center; font-size:8.5pt; color:#9ca3af; margin-top:16px; font-family:'Source Sans 3',sans-serif;">
+    PETase-ML &nbsp;·&nbsp; Los Altos Hacks 2026 &nbsp;·&nbsp; Source code and live demo available upon request.
+  </p>
+
+</div>
+</body>
+</html>
