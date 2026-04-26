@@ -117,6 +117,33 @@ SIDECHAIN_PKA = {
     'M': 0.0,  'N': 0.0,  'P': 0.0,  'Q': 0.0,  'R': 12.5,
     'S': 0.0,  'T': 0.0,  'V': 0.0,  'W': 0.0,  'Y': 10.1,
 }
+SIDECHAIN_IS_ACID = {
+    'C': True, 'D': True, 'E': True, 'Y': True,
+    'H': False, 'K': False, 'R': False,
+}
+ALIPHATIC_CONTRIB = {'A': 1.0, 'V': 2.9, 'I': 3.9, 'L': 3.9}
+SIZE_CLASS = {
+    'G': 0, 'A': 0,
+    'S': 1, 'C': 1, 'T': 1, 'P': 1, 'D': 1, 'N': 1, 'V': 1,
+    'E': 2, 'Q': 2, 'I': 2, 'L': 2, 'M': 2, 'H': 2, 'K': 2,
+    'F': 3, 'R': 3, 'W': 3, 'Y': 3,
+}
+DISORDER_PROPENSITY = {
+    'A': 0.06, 'C': 0.02, 'D': 0.19, 'E': 0.18, 'F': -0.05,
+    'G': 0.17, 'H': 0.04, 'I': -0.07, 'K': 0.16, 'L': -0.07,
+    'M': 0.00, 'N': 0.14, 'P': 0.12, 'Q': 0.15, 'R': 0.14,
+    'S': 0.13, 'T': 0.07, 'V': -0.06, 'W': -0.05, 'Y': -0.01,
+}
+
+def _charge_at_ph(aa: str, ph: float) -> float:
+    pka = SIDECHAIN_PKA.get(aa, 0.0)
+    if pka == 0:
+        return 0.0
+    is_acid = SIDECHAIN_IS_ACID.get(aa, True)
+    if is_acid:
+        return -1.0 / (1.0 + 10.0 ** (ph - pka))
+    else:
+        return  1.0 / (1.0 + 10.0 ** (pka - ph))
 
 BLOSUM62_DIAG = {
     'A': 4, 'R': 5, 'N': 6, 'D': 6, 'C': 9,
@@ -322,8 +349,9 @@ def _extract_features(wt_aa: str, position: int, mut_aa: str,
         features.append(float(temperature))  # feature 49
         features.append(float(ph))           # feature 50
 
-    # Extended biochemical features (8) — features 51-58 for v8 model
+    # Extended biochemical features (8) — features 51-58 for v8+ model
     if _n_features >= 58:
+        import math
         dMW = MOLECULAR_WEIGHT.get(mut_aa, 130.0) - MOLECULAR_WEIGHT.get(wt_aa, 130.0)
         dHD = float(HBOND_DONORS.get(mut_aa, 1)    - HBOND_DONORS.get(wt_aa, 1))
         dHA = float(HBOND_ACCEPTORS.get(mut_aa, 1) - HBOND_ACCEPTORS.get(wt_aa, 1))
@@ -335,10 +363,42 @@ def _extract_features(wt_aa: str, position: int, mut_aa: str,
         charge_loss = 1.0 if pol_wt  == 2 and pol_mut != 2 else 0.0
         pka_wt  = SIDECHAIN_PKA.get(wt_aa,  0.0)
         pka_mut = SIDECHAIN_PKA.get(mut_aa, 0.0)
-        import math
         ion_wt  = 1.0 / (1.0 + 10.0 ** (pka_wt  - float(ph))) if pka_wt  > 0 else 0.0
         ion_mut = 1.0 / (1.0 + 10.0 ** (pka_mut - float(ph))) if pka_mut > 0 else 0.0
         features.extend([dMW, dHD, dHA, dTurn, pol_change, charge_gain, charge_loss, ion_mut - ion_wt])
+
+    # Further extended features (10) — features 59-68 for v9 model
+    if _n_features >= 68:
+        dAliphatic = ALIPHATIC_CONTRIB.get(mut_aa, 0.0) - ALIPHATIC_CONTRIB.get(wt_aa, 0.0)
+        ch_wt  = _charge_at_ph(wt_aa,  ph)
+        ch_mut = _charge_at_ph(mut_aa, ph)
+        dCharge_ph = ch_mut - ch_wt
+        dSizeClass = float(SIZE_CLASS.get(mut_aa, 1) - SIZE_CLASS.get(wt_aa, 1))
+        dDisorder  = DISORDER_PROPENSITY.get(mut_aa, 0.0) - DISORDER_PROPENSITY.get(wt_aa, 0.0)
+        if sequence and 1 <= position <= len(sequence):
+            idx = position - 1
+            win = sequence[max(0, idx-5):idx+6]
+            aa_counts = {a: win.count(a) for a in set(win)}
+            n = len(win)
+            entropy = -sum((c/n) * np.log2(c/n) for c in aa_counts.values() if c > 0)
+        else:
+            entropy = 2.0
+        rsa_here = _estimate_rsa(sequence, position) if sequence else 0.5
+        buried_h_wt  = 1.0 if (rsa_here < 0.25 and HYDROPHOBICITY.get(wt_aa, 0)  > 1.5) else 0.0
+        buried_h_mut = 1.0 if (rsa_here < 0.25 and HYDROPHOBICITY.get(mut_aa, 0) > 1.5) else 0.0
+        abs_ch_wt  = abs(ch_wt)
+        abs_ch_mut = abs(ch_mut)
+        if sequence and 1 <= position <= len(sequence):
+            idx = position - 1
+            cys_positions = [i for i, a in enumerate(sequence) if a == 'C']
+            nearest_cys_dist = (min(abs(idx - cp) for cp in cys_positions) / max(len(sequence), 1)
+                                if cys_positions else 1.0)
+        else:
+            nearest_cys_dist = 1.0
+        features.extend([
+            dAliphatic, dCharge_ph, dSizeClass, dDisorder,
+            entropy, buried_h_wt, buried_h_mut, abs_ch_wt, abs_ch_mut, nearest_cys_dist,
+        ])
 
     return features
 
@@ -411,19 +471,22 @@ def train_model(force_retrain: bool = False) -> dict:
 
 
 def _ensemble_predict(features_scaled):
-    """Get ensemble prediction — stacking meta-learner if available, else weighted average."""
-    base_preds = []
-    for (name, model) in _ensemble['models']:
-        pred = model.predict(features_scaled)
-        base_preds.append(pred)
+    """Get ensemble DDG prediction — stacking meta-learner if available, else weighted average."""
+    base_preds = [model.predict(features_scaled) for (_, model) in _ensemble['models']]
 
     if _ensemble.get('use_stacking') and _ensemble.get('meta_learner') is not None:
         stack = np.column_stack(base_preds)
         return _ensemble['meta_learner'].predict(stack)
 
-    # Fallback: weighted average
     weights = _ensemble.get('weights', [1.0 / len(base_preds)] * len(base_preds))
     return np.sum([p * w for p, w in zip(base_preds, weights)], axis=0) / sum(weights)
+
+
+def get_optimal_threshold() -> float:
+    """Return the Youden-optimal DDG classification threshold (default 0.0 if not set)."""
+    if _ensemble is None:
+        return 0.0
+    return _ensemble.get('optimal_threshold', 0.0)
 
 
 def predict_mutation(wt_aa: str, position: int, mut_aa: str,

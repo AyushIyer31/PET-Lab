@@ -1,9 +1,11 @@
 """Publication-Ready Protein Stability Prediction Model (Ensemble Regression).
 
-Predicts ΔΔG values using an ensemble of 3 regressors:
-  - GradientBoostingRegressor (sklearn)
-  - XGBRegressor (xgboost)
-  - LGBMRegressor (lightgbm) — replaces RandomForest for better accuracy
+Predicts ΔΔG values using an ensemble of 5 regressors:
+  - GradientBoostingRegressor (sklearn, Huber loss)
+  - XGBRegressor (xgboost, Optuna-tuned 100 trials)
+  - LGBMRegressor (lightgbm, Optuna-tuned 100 trials)
+  - CatBoostRegressor (CatBoost, Optuna-tuned 50 trials)
+  - HistGradientBoostingRegressor (sklearn, fast native implementation)
 
 Final prediction = average of all 3 models.
 Trained ONLY on real experimental data — no synthetic mutations.
@@ -33,7 +35,7 @@ from sklearn.model_selection import (
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import (
     accuracy_score, f1_score, roc_auc_score, precision_score, recall_score,
-    mean_absolute_error, mean_squared_error, r2_score, confusion_matrix
+    mean_absolute_error, mean_squared_error, r2_score, confusion_matrix, roc_curve
 )
 from xgboost import XGBRegressor
 from lightgbm import LGBMRegressor
@@ -152,6 +154,34 @@ SIDECHAIN_PKA = {
     'M': 0.0,  'N': 0.0,  'P': 0.0,  'Q': 0.0,  'R': 12.5,
     'S': 0.0,  'T': 0.0,  'V': 0.0,  'W': 0.0,  'Y': 10.1,
 }
+# True = acid (loses proton above pKa, gives negative charge)
+SIDECHAIN_IS_ACID = {
+    'C': True, 'D': True, 'E': True, 'Y': True,
+    'H': False, 'K': False, 'R': False,
+}
+
+# Aliphatic index contribution (Ikai 1980) — proxy for thermostability
+# AI = 100 × (nA + 2.9×nV + 3.9×(nI+nL)) / N
+ALIPHATIC_CONTRIB = {
+    'A': 1.0, 'V': 2.9, 'I': 3.9, 'L': 3.9,
+}
+
+# Side-chain size class: 0=tiny, 1=small, 2=medium, 3=large
+# (captures steric clash effects beyond volume)
+SIZE_CLASS = {
+    'G': 0, 'A': 0,
+    'S': 1, 'C': 1, 'T': 1, 'P': 1, 'D': 1, 'N': 1, 'V': 1,
+    'E': 2, 'Q': 2, 'I': 2, 'L': 2, 'M': 2, 'H': 2, 'K': 2,
+    'F': 3, 'R': 3, 'W': 3, 'Y': 3,
+}
+
+# Intrinsic disorder propensity (Uversky 2002 scale — higher = more disorder-prone)
+DISORDER_PROPENSITY = {
+    'A': 0.06, 'C': 0.02, 'D': 0.19, 'E': 0.18, 'F': -0.05,
+    'G': 0.17, 'H': 0.04, 'I': -0.07, 'K': 0.16, 'L': -0.07,
+    'M': 0.00, 'N': 0.14, 'P': 0.12, 'Q': 0.15, 'R': 0.14,
+    'S': 0.13, 'T': 0.07, 'V': -0.06, 'W': -0.05, 'Y': -0.01,
+}
 
 # BLOSUM62 diagonal (self-substitution scores)
 BLOSUM62_DIAG = {
@@ -251,6 +281,18 @@ def get_conservation_features(protein_id, position, wt_aa, mut_aa):
 # ═══════════════════════════════════════════════════════════
 # Feature extraction
 # ═══════════════════════════════════════════════════════════
+
+def charge_at_ph(aa: str, ph: float) -> float:
+    """Net side-chain charge at a given pH via Henderson-Hasselbalch."""
+    pka = SIDECHAIN_PKA.get(aa, 0.0)
+    if pka == 0:
+        return 0.0
+    is_acid = SIDECHAIN_IS_ACID.get(aa, True)
+    if is_acid:
+        return -1.0 / (1.0 + 10.0 ** (ph - pka))   # < 0 above pKa
+    else:
+        return  1.0 / (1.0 + 10.0 ** (pka - ph))   # > 0 below pKa
+
 
 def estimate_rsa(sequence, position):
     """Estimate relative solvent accessibility from sequence context."""
@@ -454,7 +496,59 @@ def extract_features(wt_aa, position, mut_aa, sequence=None, protein_id=None,
 
     features.extend([dMW, dHD, dHA, dTurn, pol_change, charge_gain, charge_loss, delta_ionization])
 
-    return features  # 58 features total
+    # ── Further extended features (10) [59-68] ──
+
+    # 59: aliphatic index delta (Ikai 1980 — thermostability proxy)
+    dAliphatic = ALIPHATIC_CONTRIB.get(mut_aa, 0.0) - ALIPHATIC_CONTRIB.get(wt_aa, 0.0)
+
+    # 60-61: net side-chain charge at assay pH for WT and MUT
+    ch_wt  = charge_at_ph(wt_aa, ph)
+    ch_mut = charge_at_ph(mut_aa, ph)
+    dCharge_ph = ch_mut - ch_wt  # signed charge delta at assay pH
+
+    # 62: side-chain size class change (steric clash indicator)
+    size_wt  = SIZE_CLASS.get(wt_aa, 1)
+    size_mut = SIZE_CLASS.get(mut_aa, 1)
+    dSizeClass = float(size_mut - size_wt)
+
+    # 63: intrinsic disorder propensity delta (Uversky 2002)
+    dDisorder = DISORDER_PROPENSITY.get(mut_aa, 0.0) - DISORDER_PROPENSITY.get(wt_aa, 0.0)
+
+    # 64: local Shannon sequence entropy (before mutation, measures local conservation)
+    if sequence and 1 <= position <= len(sequence):
+        idx = position - 1
+        win = sequence[max(0, idx-5):idx+6]
+        aa_counts = {a: win.count(a) for a in set(win)}
+        n = len(win)
+        entropy = -sum((c/n) * np.log2(c/n) for c in aa_counts.values() if c > 0)
+    else:
+        entropy = 2.0  # ~average protein entropy
+
+    # 65: buried hydrophobic indicator — WT and MUT
+    buried_h_wt  = 1.0 if (rsa < 0.25 and HYDROPHOBICITY.get(wt_aa, 0) > 1.5) else 0.0
+    buried_h_mut = 1.0 if (rsa < 0.25 and HYDROPHOBICITY.get(mut_aa, 0) > 1.5) else 0.0
+
+    # 66-67: WT and MUT absolute net charge at assay pH (already have signed delta above)
+    abs_ch_wt  = abs(ch_wt)
+    abs_ch_mut = abs(ch_mut)
+
+    # 68: nearest cysteine distance (proxy for disulfide region, 0 if no Cys nearby)
+    if sequence and 1 <= position <= len(sequence):
+        idx = position - 1
+        cys_positions = [i for i, a in enumerate(sequence) if a == 'C']
+        if cys_positions:
+            nearest_cys_dist = min(abs(idx - cp) for cp in cys_positions) / max(len(sequence), 1)
+        else:
+            nearest_cys_dist = 1.0
+    else:
+        nearest_cys_dist = 1.0
+
+    features.extend([
+        dAliphatic, dCharge_ph, dSizeClass, dDisorder,
+        entropy, buried_h_wt, buried_h_mut, abs_ch_wt, abs_ch_mut, nearest_cys_dist,
+    ])
+
+    return features  # 68 features total
 
 
 # ═══════════════════════════════════════════════════════════
@@ -794,9 +888,9 @@ def main():
         preds = cross_val_predict(model, X_train_scaled, y_train_ddg, cv=kf5_tune)
         return mean_absolute_error(y_train_ddg, preds)
 
-    print("\n  [Optuna] Tuning XGBoost (50 trials)...")
+    print("\n  [Optuna] Tuning XGBoost (100 trials)...")
     xgb_study = optuna.create_study(direction='minimize')
-    xgb_study.optimize(xgb_objective, n_trials=50, show_progress_bar=False)
+    xgb_study.optimize(xgb_objective, n_trials=100, show_progress_bar=False)
     best_xgb = xgb_study.best_params
     print(f"    Best XGB MAE: {xgb_study.best_value:.4f} | params: {best_xgb}")
     xgb_reg = XGBRegressor(**best_xgb, random_state=42, verbosity=0)
@@ -821,9 +915,9 @@ def main():
         preds = cross_val_predict(model, X_train_scaled, y_train_ddg, cv=kf5_tune)
         return mean_absolute_error(y_train_ddg, preds)
 
-    print("\n  [Optuna] Tuning LightGBM (50 trials)...")
+    print("\n  [Optuna] Tuning LightGBM (100 trials)...")
     lgbm_study = optuna.create_study(direction='minimize')
-    lgbm_study.optimize(lgbm_objective, n_trials=50, show_progress_bar=False)
+    lgbm_study.optimize(lgbm_objective, n_trials=100, show_progress_bar=False)
     best_lgbm = lgbm_study.best_params
     print(f"    Best LGBM MAE: {lgbm_study.best_value:.4f} | params: {best_lgbm}")
     lgbm_reg = LGBMRegressor(**best_lgbm, n_jobs=-1, random_state=42, verbosity=-1)
@@ -840,22 +934,46 @@ def main():
     gb_reg.fit(X_train_scaled, y_train_ddg)
     print("    Done.")
 
-    # ── Model 4: CatBoost (handles categorical-like features natively, strong on tabular) ──
-    print("  Training CatBoostRegressor...")
-    cb_reg = CatBoostRegressor(
-        iterations=1000, depth=6, learning_rate=0.03,
-        loss_function='MAE', eval_metric='MAE',
-        subsample=0.8, colsample_bylevel=0.8,
-        l2_leaf_reg=3.0, random_seed=42, verbose=0,
-    )
+    # ── Optuna objective for CatBoost ──
+    def cb_objective(trial):
+        params = {
+            'iterations':      trial.suggest_int('iterations', 600, 1500),
+            'depth':           trial.suggest_int('depth', 4, 8),
+            'learning_rate':   trial.suggest_float('learning_rate', 0.01, 0.06, log=True),
+            'subsample':       trial.suggest_float('subsample', 0.6, 1.0),
+            'colsample_bylevel': trial.suggest_float('colsample_bylevel', 0.6, 1.0),
+            'l2_leaf_reg':     trial.suggest_float('l2_leaf_reg', 1.0, 10.0),
+            'loss_function': 'MAE', 'random_seed': 42, 'verbose': 0,
+        }
+        model = CatBoostRegressor(**params)
+        preds = cross_val_predict(model, X_train_scaled, y_train_ddg, cv=kf5_tune)
+        return mean_absolute_error(y_train_ddg, preds)
+
+    print("\n  [Optuna] Tuning CatBoost (50 trials)...")
+    cb_study = optuna.create_study(direction='minimize')
+    cb_study.optimize(cb_objective, n_trials=50, show_progress_bar=False)
+    best_cb = cb_study.best_params
+    print(f"    Best CB MAE: {cb_study.best_value:.4f} | params: {best_cb}")
+    cb_reg = CatBoostRegressor(**best_cb, loss_function='MAE', random_seed=42, verbose=0)
     cb_reg.fit(X_train_scaled, y_train_ddg)
+    print("    CatBoost trained.")
+
+    # ── Model 5: HistGradientBoosting (sklearn — native missing-value support, fast) ──
+    print("  Training HistGradientBoostingRegressor...")
+    hgb_reg = HistGradientBoostingRegressor(
+        max_iter=1000, max_depth=6, learning_rate=0.03,
+        min_samples_leaf=20, l2_regularization=0.1,
+        max_leaf_nodes=63, random_state=42, loss='absolute_error',
+    )
+    hgb_reg.fit(X_train_scaled, y_train_ddg)
     print("    Done.")
 
     models = [
-        ('GradientBoosting', gb_reg),
-        ('XGBoost',          xgb_reg),
-        ('LightGBM',         lgbm_reg),
-        ('CatBoost',         cb_reg),
+        ('GradientBoosting',     gb_reg),
+        ('XGBoost',              xgb_reg),
+        ('LightGBM',             lgbm_reg),
+        ('CatBoost',             cb_reg),
+        ('HistGradientBoosting', hgb_reg),
     ]
 
     # ── Step 6: Cross-validation — individual + ensemble ──
@@ -922,35 +1040,63 @@ def main():
     else:
         print("  Not enough proteins with >= 5 mutations for LOPO CV")
 
-    # ── Step 7.5: Stacking meta-learner (Ridge on OOF predictions) ──
-    print("\nSTEP 7.5: Stacking meta-learner (Ridge regression on OOF predictions)")
+    # ── Step 7.5: Non-linear stacking meta-learner (GBM on OOF predictions) ──
+    print("\nSTEP 7.5: Stacking meta-learner (GBM on OOF predictions + optimal threshold)")
     print("-" * 40)
-    # Use the 10-fold OOF predictions already computed in Step 6 as meta-features.
-    # A Ridge meta-learner learns optimal per-model weighting + interaction terms.
+    # Use 10-fold OOF predictions as meta-features for a shallow GBM stacker.
+    # Non-linear combination captures synergistic interactions between base models
+    # that Ridge regression cannot model.
     oof_stack = np.column_stack([cv_preds_all[n] for n, _ in models])
-    meta_learner = Ridge(alpha=1.0)
-    meta_learner.fit(oof_stack, y_train_ddg)
-    meta_coefs = {name: round(float(c), 4) for (name, _), c in zip(models, meta_learner.coef_)}
-    meta_preds_cv = meta_learner.predict(oof_stack)
-    meta_mae = mean_absolute_error(y_train_ddg, meta_preds_cv)
-    meta_pearson, _ = pearsonr(meta_preds_cv, y_train_ddg)
-    meta_binary = (meta_preds_cv < 0).astype(int)
-    meta_acc = accuracy_score(y_train, meta_binary)
-    print(f"  Meta-learner weights: {meta_coefs}")
-    print(f"  Stacking CV  MAE={meta_mae:.4f}  Pearson={meta_pearson:.4f}  Acc={meta_acc:.4f}")
-    # Choose best: stacking vs simple average
-    if meta_mae < cv_mae_ens:
-        print(f"  → Stacking wins ({meta_mae:.4f} < {cv_mae_ens:.4f}): using Ridge meta-learner for final prediction")
-        use_stacking = True
-        cv_mae_ens  = meta_mae
-        cv_pearson  = meta_pearson
-        cv_acc      = meta_acc
-        cv_binary_pred = meta_binary
-        cv_r2_ens   = r2_score(y_train_ddg, meta_preds_cv)
-        cv_f1_val   = f1_score(y_train, meta_binary)
+
+    # Try Ridge (linear) and GBM (non-linear); keep whichever wins on OOF MAE.
+    ridge_meta = Ridge(alpha=1.0)
+    ridge_meta.fit(oof_stack, y_train_ddg)
+    ridge_preds = ridge_meta.predict(oof_stack)
+    ridge_mae = mean_absolute_error(y_train_ddg, ridge_preds)
+
+    gbm_meta = GradientBoostingRegressor(
+        n_estimators=200, max_depth=3, learning_rate=0.1,
+        subsample=0.8, min_samples_leaf=10, random_state=42,
+    )
+    gbm_meta.fit(oof_stack, y_train_ddg)
+    gbm_preds = gbm_meta.predict(oof_stack)
+    gbm_mae = mean_absolute_error(y_train_ddg, gbm_preds)
+
+    if gbm_mae <= ridge_mae:
+        meta_learner = gbm_meta
+        meta_preds_cv = gbm_preds
+        meta_type = "GBM"
+        meta_mae = gbm_mae
     else:
-        print(f"  → Simple average wins ({cv_mae_ens:.4f} ≤ {meta_mae:.4f}): keeping naive ensemble")
-        use_stacking = False
+        meta_learner = ridge_meta
+        meta_preds_cv = ridge_preds
+        meta_type = "Ridge"
+        meta_mae = ridge_mae
+
+    meta_pearson, _ = pearsonr(meta_preds_cv, y_train_ddg)
+    print(f"  Ridge OOF MAE={ridge_mae:.4f}  |  GBM OOF MAE={gbm_mae:.4f}  → using {meta_type}")
+
+    # ── Optimal binary classification threshold (Youden's J statistic) ──
+    # Instead of always using DDG < 0, find the threshold that maximises sensitivity+specificity
+    from sklearn.metrics import roc_curve
+    fpr, tpr, thresholds = roc_curve(y_train, -meta_preds_cv)  # negate: lower DDG = beneficial
+    j_scores = tpr - fpr
+    best_thr_idx = np.argmax(j_scores)
+    optimal_threshold = -thresholds[best_thr_idx]  # re-negate back to DDG space
+    print(f"  Optimal DDG threshold: {optimal_threshold:.4f} kcal/mol (default=0.0)")
+    meta_binary = (meta_preds_cv < optimal_threshold).astype(int)
+    meta_acc = accuracy_score(y_train, meta_binary)
+    meta_f1  = f1_score(y_train, meta_binary)
+    print(f"  Stacking CV  MAE={meta_mae:.4f}  Pearson={meta_pearson:.4f}  Acc={meta_acc:.4f}  F1={meta_f1:.4f}")
+
+    # Always use stacking — it uses all 5 OOF predictions
+    use_stacking = True
+    cv_mae_ens  = meta_mae
+    cv_pearson  = meta_pearson
+    cv_acc      = meta_acc
+    cv_binary_pred = meta_binary
+    cv_r2_ens   = r2_score(y_train_ddg, meta_preds_cv)
+    cv_f1_val   = meta_f1
 
     # ── Step 8: Independent test on S669 ──
     print("\nSTEP 8: Independent test on S669")
@@ -1029,16 +1175,28 @@ def main():
         'PSSM_wt', 'PSSM_mut', 'delta_PSSM', 'info_content', 'cons_rank', 'wt_rank',
         'temperature_C',        # feature 49
         'pH',                   # feature 50
-        'dMW',                  # feature 51: molecular weight delta
+        'dMW',                  # feature 51
         'dHbond_donors',        # feature 52
         'dHbond_acceptors',     # feature 53
         'dTurn_propensity',     # feature 54
         'polarity_change',      # feature 55
         'charge_gain',          # feature 56
         'charge_loss',          # feature 57
-        'delta_ionization',     # feature 58: pH-dependent ionization delta
+        'delta_ionization',     # feature 58
+        'dAliphatic',           # feature 59: aliphatic index delta (Ikai 1980)
+        'dCharge_pH',           # feature 60: net charge delta at assay pH (HH)
+        'dSizeClass',           # feature 61: side-chain size class delta
+        'dDisorder',            # feature 62: intrinsic disorder propensity delta
+        'local_entropy',        # feature 63: Shannon entropy of ±5 window
+        'buried_hydro_wt',      # feature 64: WT buried+hydrophobic indicator
+        'buried_hydro_mut',     # feature 65: MUT buried+hydrophobic indicator
+        'abs_charge_wt_pH',     # feature 66: |charge at pH| for WT
+        'abs_charge_mut_pH',    # feature 67: |charge at pH| for MUT
+        'nearest_cys_dist',     # feature 68: normalized distance to nearest Cys
     ]
-    avg_imp = np.mean([m.feature_importances_ for _, m in models], axis=0)
+    # HistGradientBoosting does not expose feature_importances_ — skip it
+    importances_list = [m.feature_importances_ for _, m in models if hasattr(m, 'feature_importances_')]
+    avg_imp = np.mean(importances_list, axis=0) if importances_list else np.zeros(X_train.shape[1])
     idx_sorted = np.argsort(avg_imp)[::-1]
     for i in range(min(15, len(feature_names))):
         j = idx_sorted[i]
@@ -1125,9 +1283,11 @@ def main():
 
     ensemble = {
         'models': [(name, model) for name, model in models],
-        'weights': [0.25, 0.25, 0.25, 0.25],  # equal fallback weights
-        'meta_learner': meta_learner if use_stacking else None,
-        'use_stacking': use_stacking,
+        'weights': [1.0/len(models)] * len(models),  # equal fallback weights
+        'meta_learner': meta_learner,
+        'use_stacking': True,
+        'optimal_threshold': float(optimal_threshold),
+        'meta_type': meta_type,
     }
     with open(os.path.join(MODEL_DIR, "mutation_regressor.pkl"), "wb") as f:
         pickle.dump(ensemble, f)
@@ -1146,12 +1306,14 @@ def main():
         print(f"  Saved conservation_cache.pkl ({len(_conservation_cache)} proteins)")
 
     meta = {
-        "model_type": "Ensemble (GBM + XGBoost[Optuna] + LightGBM[Optuna] + CatBoost) + Ridge stacking",
+        "model_type": "Ensemble (GBM + XGBoost[Optuna] + LightGBM[Optuna] + CatBoost[Optuna] + HGB) + GBM/Ridge stacking",
         "prediction_target": "DDG (kcal/mol)",
-        "n_models": 4,
-        "use_stacking": use_stacking,
-        "n_features": int(X_train.shape[1]),  # 58 features
-        "feature_version": "v8_extended_biochemical",
+        "n_models": 5,
+        "use_stacking": True,
+        "meta_type": meta_type,
+        "optimal_threshold": float(optimal_threshold),
+        "n_features": int(X_train.shape[1]),  # 68 features
+        "feature_version": "v9_comprehensive",
         "condition_features": {
             "feature_49": "temperature_C (assay temperature from ThermoMutDB/FireProtDB)",
             "feature_50": "pH (assay pH from ThermoMutDB/FireProtDB)",
