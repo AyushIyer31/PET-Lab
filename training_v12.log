@@ -1,0 +1,159 @@
+======================================================================
+PUBLICATION-READY MODEL TRAINING — v12
+Real experimental data only — no synthetic mutations
+v12: real RSA/phi/psi/depth from ThermoMutDB + 100-trial Optuna
+======================================================================
+
+STEP 1: Loading datasets
+----------------------------------------
+Loading FireProtDB...
+  Loaded 3438 mutations from FireProtDB
+Loading ProDDG (S2648)...
+  WARNING: ProDDG file not found at /Users/admin/Documents/Los-Altos-Hacks/proddg_s2648.csv — skipping
+Loading ThermoMutDB...
+  Loaded 8801 DDG mutations from ThermoMutDB
+  Loaded 4953 ΔTm records from ThermoMutDB
+Loading S669 (independent test set)...
+  WARNING: S669 file not found at /Users/admin/Documents/Los-Altos-Hacks/s669_full.tsv — skipping independent test
+
+STEP 2: Combining and deduplicating training data
+----------------------------------------
+  Total before dedup: 12239
+  After deduplication: 8925 unique mutations (removed 3314)
+  Removed 0 mutations overlapping with S669 test set
+  Final training set: 8925 mutations
+
+  Removed 20 outlier mutations (|DDG| > 10.0 kcal/mol)
+  Training set after outlier removal: 8905
+
+Augmenting with reverse mutations (antisymmetry of ΔΔG)...
+  After deduplication: 17791 unique mutations (removed 18)
+  Added 8886 reverse mutations → 17791 total
+
+Loading PSSM conservation cache...
+  WARNING: No conservation cache found. Run generate_pssm_conservation.py first.
+
+STEP 3: Extracting features
+----------------------------------------
+  PSSM coverage: 0/17791 mutations (0.0%)
+  PSSM coverage: 0/0 mutations (0.0%)
+  Training: 17791 samples, 80 features
+  Test (S669): 0 samples
+  Training class balance: 8780 stabilizing, 9011 destabilizing
+  Test class balance: 0 stabilizing, 0 destabilizing
+  Training sources: {'FireProtDB': 6798, 'ThermoMutDB': 10993}
+
+STEP 4: Scaling features
+----------------------------------------
+  Scaled 80 features
+
+STEP 5: Training ensemble (GBM + XGBoost + LightGBM + CatBoost) with Optuna tuning
+----------------------------------------
+  Stabilizing (DDG<0): 8780, Destabilizing (DDG>=0): 9011
+  DDG range: [-9.80, 9.80] kcal/mol
+
+  Optuna subsample: 5000 samples (full set: 17791)
+
+  [Optuna] Tuning XGBoost (100 trials on subsample)...
+    Best XGB MAE: 1.2258 | params: {'n_estimators': 401, 'max_depth': 8, 'learning_rate': 0.012520337444403838, 'subsample': 0.9774018327614273, 'colsample_bytree': 0.6075625636785059, 'min_child_weight': 3, 'reg_alpha': 0.022117490646383006, 'reg_lambda': 3.279409355724886}
+    XGBoost trained.
+
+  [Optuna] Tuning LightGBM (100 trials on subsample)...
+    Best LGBM MAE: 1.2298 | params: {'n_estimators': 400, 'max_depth': 8, 'learning_rate': 0.0107389604733381, 'num_leaves': 72, 'subsample': 0.9670874611758872, 'colsample_bytree': 0.6736187907579878, 'min_child_samples': 11, 'reg_alpha': 0.005530625989669694, 'reg_lambda': 2.5130613778936546}
+    LightGBM trained.
+
+  Training GradientBoostingRegressor...
+    Done.
+
+  [Optuna] Tuning CatBoost (30 trials on subsample)...
+    Best CB MAE: 1.2280 | params: {'iterations': 976, 'depth': 8, 'learning_rate': 0.03180992696455278, 'subsample': 0.9933066077125853, 'colsample_bylevel': 0.7385329146608854, 'l2_leaf_reg': 4.701282923862342}
+    CatBoost trained.
+  Training HistGradientBoostingRegressor...
+    Done.
+  Training MLPRegressor (256-128-64, early stopping)...
+    Done.
+
+STEP 6: Cross-validation (10-fold)
+----------------------------------------
+  GradientBoosting      MAE=1.1853  Pearson=0.6259  Spearman=0.6137  Acc=0.7219
+  XGBoost               MAE=1.1492  Pearson=0.6593  Spearman=0.6454  Acc=0.7397
+  LightGBM              MAE=1.1689  Pearson=0.6460  Spearman=0.6319  Acc=0.7292
+  CatBoost              MAE=1.1361  Pearson=0.6461  Spearman=0.6440  Acc=0.7436
+  HistGradientBoosting  MAE=1.1684  Pearson=0.6258  Spearman=0.6285  Acc=0.7363
+  MLP                   MAE=1.2405  Pearson=0.6020  Spearman=0.5848  Acc=0.7074
+
+  ENSEMBLE (avg)        MAE=1.1542  Pearson=0.6485  Spearman=0.6394  Acc=0.7350
+  CV R²: 0.4162
+  CV F1 (from threshold): 0.7247
+
+STEP 7: Leave-one-protein-out cross-validation (ensemble)
+----------------------------------------
+  Proteins with >= 5 mutations: 249
+  LOPO MAE:      1.2571
+  LOPO Pearson:  0.5656
+  LOPO Accuracy: 0.7067
+
+STEP 7.5: Wide stacking (direct classifiers + regressor OOF + threshold sweep)
+----------------------------------------
+  Training direct binary classifiers (5-fold OOF probs)...
+    XGB_clf              OOF Acc=0.7440
+    LGBM_clf             OOF Acc=0.7393
+    CB_clf               OOF Acc=0.7360
+  Ridge OOF MAE=1.1219  |  GBM OOF MAE=1.0806  → using GBM
+  Optimal DDG threshold (Youden): -0.0534 kcal/mol
+  Training wide-stack CatBoost classifier meta-learner (5-fold CV)...
+  Wide-stack clf CV:  Acc=0.7536  F1=0.7413  thr=0.517
+  Winning method: wide-stack CatBoost clf (thr=0.517)
+  Stacking CV  MAE=1.0806  Pearson=0.7059  Acc=0.7536  F1=0.7413
+
+STEP 8: Independent test on S669
+----------------------------------------
+  S669 not available — skipping independent test
+
+STEP 9: Top 15 feature importances (averaged)
+----------------------------------------
+   1. temperature_C        415.5450
+   2. pH                   389.7319
+   3. RSA                  329.7325
+   4. ca_depth_norm        257.3289
+   5. phi_norm             231.2330
+   6. psi_norm             225.2589
+   7. dDisorder            205.1764
+   8. burial×dMW           193.0898
+   9. dH×temp              190.0688
+  10. dV×burial            185.9127
+  11. dH×burial            176.1184
+  12. burial×helix         175.1773
+  13. delta_ionization     174.2047
+  14. burial×dChargePH     163.6081
+  15. dSheet               152.6903
+
+STEP 10: Training ΔTm regressor (ThermoMutDB, 6,107 entries)
+----------------------------------------
+  Source: ThermoMutDB (Pucci et al. 2021, Nucleic Acids Res.)
+  Target: ΔTm (°C) — measured change in melting temperature upon mutation
+  ΔTm training set: 4953 mutations (skipped 0)
+  ΔTm range: [-68.00, 45.00] °C
+  Training GradientBoosting ΔTm regressor...
+  Training XGBoost ΔTm regressor...
+  ΔTm CV (5-fold): MAE=4.223°C  Pearson=0.5903  Spearman=0.5654
+
+STEP 11: Saving ensemble model and ΔTm regressor
+----------------------------------------
+  Saved deltaTm_regressor.pkl (4953 ΔTm training points)
+  Saved mutation_regressor.pkl (ensemble, 80 features)
+  Saved scaler.pkl
+  Saved model_meta.json
+
+======================================================================
+TRAINING COMPLETE — ENSEMBLE MODEL
+  Training: 17791 real experimental mutations
+  Test (S669): 0 independent mutations
+  CV MAE: 1.0806 kcal/mol
+  CV Pearson: 0.7059
+  CV Accuracy (threshold): 0.7536
+  S669 MAE: 0.0000 kcal/mol
+  S669 Pearson: 0.0000
+  S669 Accuracy (threshold): 0.0000
+  Synthetic data used: NONE
+======================================================================
