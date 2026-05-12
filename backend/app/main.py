@@ -45,7 +45,7 @@ def _download_model_files_background():
                 repo_id="Ayush0931/petase-models",
                 filename=fname,
                 local_dir=model_dir,
-                token=os.environ.get("HF_TOKEN"),
+                token=(os.environ.get("HF_TOKEN") or "").strip() or None,
             )
             print(f"[startup]   Done: {fname}", file=sys.stderr)
         print("[startup] All model files downloaded.", file=sys.stderr)
