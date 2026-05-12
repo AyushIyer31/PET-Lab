@@ -4,6 +4,49 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
+import os
+import sys
+
+
+def _ensure_model_files():
+    """Download model files from Hugging Face if missing (e.g. fresh Render deploy)."""
+    model_dir = os.path.join(os.path.dirname(__file__), "trained_models")
+    os.makedirs(model_dir, exist_ok=True)
+
+    files = [
+        "mutation_regressor.pkl",
+        "esm_embeddings_cache.pkl",
+        "conservation_cache.pkl",
+        "deltaTm_regressor.pkl",
+        "esm_pca.pkl",
+        "metal_coord_cache.pkl",
+        "mutation_classifier.pkl",
+        "physics_features_cache.pkl",
+        "scaler.pkl",
+    ]
+
+    missing = [f for f in files if not os.path.exists(os.path.join(model_dir, f))]
+    if not missing:
+        return
+
+    print(f"[startup] Downloading {len(missing)} missing model file(s) from Hugging Face...", file=sys.stderr)
+    try:
+        from huggingface_hub import hf_hub_download
+        for fname in missing:
+            print(f"[startup]   Downloading {fname}...", file=sys.stderr)
+            hf_hub_download(
+                repo_id="Ayush0931/petase-models",
+                filename=fname,
+                local_dir=model_dir,
+                token=os.environ.get("HF_TOKEN"),
+            )
+            print(f"[startup]   Done: {fname}", file=sys.stderr)
+        print("[startup] All model files ready.", file=sys.stderr)
+    except Exception as e:
+        print(f"[startup] ERROR downloading model files: {e}", file=sys.stderr)
+
+
+_ensure_model_files()
 
 from .models.schemas import (
     SequenceInput,
