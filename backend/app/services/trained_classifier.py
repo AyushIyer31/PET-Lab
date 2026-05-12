@@ -26,6 +26,10 @@ SCALER_PATH = os.path.join(MODEL_DIR, "scaler.pkl")
 META_PATH = os.path.join(MODEL_DIR, "model_meta.json")
 CONSERVATION_PATH = os.path.join(MODEL_DIR, "conservation_cache.pkl")
 DTM_REGRESSOR_PATH = os.path.join(MODEL_DIR, "deltaTm_regressor.pkl")
+ESM_CACHE_PATH = os.path.join(MODEL_DIR, "esm_embeddings_cache.pkl")
+ESM_PCA_PATH = os.path.join(MODEL_DIR, "esm_pca.pkl")
+METAL_COORD_PATH = os.path.join(MODEL_DIR, "metal_coord_cache.pkl")
+PHYSICS_CACHE_PATH = os.path.join(MODEL_DIR, "physics_features_cache.pkl")
 
 _ensemble = None  # dict with 'models' list and 'weights'
 _scaler = None
@@ -33,6 +37,11 @@ _training_metrics = None
 _conservation_cache = None
 _dtm_ensemble = None   # ΔTm regressor (GradientBoosting + XGBoost, ThermoMutDB)
 _n_features = 48       # updated from model_meta.json after load
+_esm_cache = None      # {protein_id: np.array(n_residues, 640)}
+_esm_pca = None        # fitted sklearn PCA object
+_esm_pca_mean = None   # mean PCA vector for imputation
+_metal_coord_cache = None  # {protein_id: {resnum: set of metal symbols}}
+_physics_cache = None  # {protein_id: {resnum: np.array(6,)}}
 
 # ═══════════════════════════════════════════════════════════
 # Amino acid property tables
@@ -136,14 +145,20 @@ DISORDER_PROPENSITY = {
 }
 
 def _charge_at_ph(aa: str, ph: float) -> float:
+    """Henderson-Hasselbalch net side-chain charge at given pH.
+
+    Correct formula (Henderson-Hasselbalch):
+      Acid (HA→A⁻+H⁺): f_deprot = 1/(1+10^(pKa−pH)) → charge = −f_deprot
+      Base (BH⁺→B+H⁺): f_prot   = 1/(1+10^(pH−pKa)) → charge = +f_prot
+    """
     pka = SIDECHAIN_PKA.get(aa, 0.0)
     if pka == 0:
         return 0.0
     is_acid = SIDECHAIN_IS_ACID.get(aa, True)
     if is_acid:
-        return -1.0 / (1.0 + 10.0 ** (ph - pka))
+        return -1.0 / (1.0 + 10.0 ** (pka - ph))   # corrected: pka-ph not ph-pka
     else:
-        return  1.0 / (1.0 + 10.0 ** (pka - ph))
+        return  1.0 / (1.0 + 10.0 ** (ph - pka))    # corrected: ph-pka not pka-ph
 
 BLOSUM62_DIAG = {
     'A': 4, 'R': 5, 'N': 6, 'D': 6, 'C': 9,
@@ -367,7 +382,7 @@ def _extract_features(wt_aa: str, position: int, mut_aa: str,
         ion_mut = 1.0 / (1.0 + 10.0 ** (pka_mut - float(ph))) if pka_mut > 0 else 0.0
         features.extend([dMW, dHD, dHA, dTurn, pol_change, charge_gain, charge_loss, ion_mut - ion_wt])
 
-    # Further extended features (10) — features 59-68 for v9 model
+    # Further extended features (10) — features 59-68 for v9+ model
     if _n_features >= 68:
         dAliphatic = ALIPHATIC_CONTRIB.get(mut_aa, 0.0) - ALIPHATIC_CONTRIB.get(wt_aa, 0.0)
         ch_wt  = _charge_at_ph(wt_aa,  ph)
@@ -399,6 +414,141 @@ def _extract_features(wt_aa: str, position: int, mut_aa: str,
             dAliphatic, dCharge_ph, dSizeClass, dDisorder,
             entropy, buried_h_wt, buried_h_mut, abs_ch_wt, abs_ch_mut, nearest_cys_dist,
         ])
+
+    # Cross-term features (8) — features 69-76 for v10 model
+    if _n_features >= 76:
+        # Need base values computed earlier — re-derive the key ones
+        dH = HYDROPHOBICITY.get(mut_aa, 0) - HYDROPHOBICITY.get(wt_aa, 0)
+        dV = VOLUME.get(mut_aa, 0) - VOLUME.get(wt_aa, 0)
+        dC = CHARGE.get(mut_aa, 0) - CHARGE.get(wt_aa, 0)
+        rsa_here = _estimate_rsa(sequence, position) if sequence else 0.5
+        burial = 1.0 - rsa_here
+        ch_wt  = _charge_at_ph(wt_aa,  ph)
+        ch_mut = _charge_at_ph(mut_aa, ph)
+        dCharge_ph_val = ch_mut - ch_wt
+        dMW_val = MOLECULAR_WEIGHT.get(mut_aa, 130.0) - MOLECULAR_WEIGHT.get(wt_aa, 130.0)
+        dAli = ALIPHATIC_CONTRIB.get(mut_aa, 0.0) - ALIPHATIC_CONTRIB.get(wt_aa, 0.0)
+        features.extend([
+            dH * dC,
+            dH * dV,
+            dCharge_ph_val * float(ph),
+            dH * float(temperature) * 0.01,
+            burial * dCharge_ph_val,
+            burial * dMW_val * 0.01,
+            abs(dH) * abs(dCharge_ph_val),
+            dAli * float(temperature) * 0.01,
+        ])
+
+    # ── v12+ features: Structural geometry (4) + v13 cross-terms (6) ───────────
+    # Feature layout: [77-80] phi/psi/depth/has_real_rsa, [81-86] structural cross-terms
+    if _n_features >= 87:
+        # v12: backbone geometry (use defaults when no PDB data available in backend)
+        phi_norm   = 0.0   # no PDB backbone angles at inference time
+        psi_norm   = 0.0
+        depth_norm = 0.0
+        has_real_rsa = 0.0
+        features.extend([phi_norm, psi_norm, depth_norm, has_real_rsa])  # [77-80]
+        # v13: structural cross-terms with the geometry features above
+        dH_local = HYDROPHOBICITY.get(mut_aa, 0) - HYDROPHOBICITY.get(wt_aa, 0)
+        temp_sc = float(temperature) * 0.01
+        features.extend([
+            phi_norm * psi_norm,          # [81] phi×psi
+            phi_norm * dH_local,          # [82] phi×dH
+            phi_norm * temp_sc,           # [83] phi×temp
+            psi_norm * dH_local,          # [84] psi×dH
+            psi_norm * temp_sc,           # [85] psi×temp
+            depth_norm * dH_local,        # [86] depth×dH
+        ])
+
+    # ── v17+ features: Metal coordination (5) + ionic strength (1) ────────────
+    # Feature layout: [87-91] metal coordination, [92] ionic_strength_norm
+    if _n_features >= 93:
+        pid_upper = (protein_id or '').upper()
+        metal_data = (_metal_coord_cache or {}).get(pid_upper, {})
+        metals_at_site = metal_data.get(position, set()) if metal_data else set()
+        is_metal_coord = 1.0 if metals_at_site else 0.0
+        is_ca2 = 1.0 if 'CA2' in metals_at_site else 0.0
+        is_zn  = 1.0 if 'ZN2' in metals_at_site else 0.0
+        is_mg  = 1.0 if 'MG2' in metals_at_site else 0.0
+        n_metal_types = float(len(metals_at_site))
+        features.extend([is_metal_coord, is_ca2, is_zn, is_mg, n_metal_types])  # [86-90]
+        # Ionic strength: physiological default 0.15 M, normalised to [0,1] with max 0.5 M
+        ionic_strength = float(getattr(_extract_features, '_ionic_strength', 0.15))
+        features.append(min(ionic_strength, 0.5) / 0.5)  # [91]
+
+    # ── v18+ features: Physics (Debye-Hückel + Born solvation), 6 features ────
+    # Feature layout: [92-97] ddg_elec, ddg_born, phi_site, q_local, debye_fac, elec_burial
+    if _n_features >= 98:
+        _C = 332.06; _eps_r = 80.0; _eps_p = 4.0; _r_B = 3.5; _lam_D = 7.85
+        pka_map = {'D':3.9,'E':4.1,'C':8.3,'Y':10.1,'H':6.0,'K':10.5,'R':12.5}
+        acid_set = {'D','E','C','Y'}
+
+        def _hh_charge(aa, ph_val):
+            pka = pka_map.get(aa, 0.0)
+            if pka == 0: return 0.0
+            if aa in acid_set:
+                return -1.0 / (1.0 + 10.0 ** (pka - ph_val))  # correct HH formula
+            return +1.0 / (1.0 + 10.0 ** (ph_val - pka))      # correct HH formula
+
+        q_wt = _hh_charge(wt_aa, float(ph))
+        q_mut = _hh_charge(mut_aa, float(ph))
+        dq = q_mut - q_wt
+
+        pid_upper = (protein_id or '').upper()
+        site_feats = (_physics_cache or {}).get(pid_upper, {}).get(position)
+        rsa_val = _estimate_rsa(sequence, position) if sequence else 0.5
+
+        contact_norm = 0.0
+        bfactor_z = 0.0
+        if site_feats is not None and len(site_feats) >= 6:
+            dh_scale, _bc, phi_site, q_local, debye_fac, _eb = site_feats[:6]
+            ddg_elec = float(dq * dh_scale)
+            if len(site_feats) >= 7:
+                contact_norm = float(site_feats[6])  # v21+: Cα contact number / 20
+            if len(site_feats) >= 8:
+                bfactor_z = float(site_feats[7])     # v22+: B-factor z-score
+        else:
+            phi_site = 0.0; q_local = 0.0; debye_fac = 0.5
+            ddg_elec = 0.0
+
+        # Born solvation using actual RSA
+        eps_eff = _eps_p + (_eps_r - _eps_p) * rsa_val
+        ddg_born = -(_C / (2 * _r_B)) * (q_mut**2 - q_wt**2) * (1/eps_eff - 1/_eps_r)
+        elec_burial = float(phi_site) * (1.0 - rsa_val)
+        # Determine how many physics features this model expects:
+        # n_physics = n_features - 76 (base) - 10 (geo) - 6 (metal+ionic) - (n_pca+1) (ESM)
+        # = n_features - 93 - n_pca
+        # v18/v20: 131-93-32=6; v21: 132-93-32=7; v22: 133-93-32=8; v19: 163-93-64=6
+        n_pca_loaded = _esm_pca.n_components if _esm_pca is not None else 32
+        n_physics_expected = _n_features - 93 - n_pca_loaded
+        phys = [ddg_elec, float(ddg_born), float(phi_site),
+                float(q_local), float(debye_fac), elec_burial]
+        if n_physics_expected >= 7:
+            phys.append(contact_norm)   # [98] contact number (v21+)
+        if n_physics_expected >= 8:
+            phys.append(bfactor_z)      # [99] B-factor z-score (v22+)
+        features.extend(phys)  # [92-97] v18, [92-98] v21, [92-99] v22
+
+    # ── v16+ features: ESM-2 PCA embeddings (32 or 64) + has_esm flag ─────────
+    # Feature layout: [98 .. 98+n_pca-1] ESM-PCA, [98+n_pca] has_esm
+    if _n_features >= 119 and _esm_pca is not None:
+        n_pca = _esm_pca.n_components
+        pid_upper = (protein_id or '').upper()
+        esm_emb = None
+        if _esm_cache:
+            arr = _esm_cache.get(pid_upper)
+            if arr is not None:
+                idx = position - 1
+                if 0 <= idx < len(arr):
+                    esm_emb = arr[idx].astype(np.float32)
+        if esm_emb is not None:
+            pca_vec = _esm_pca.transform(esm_emb.reshape(1, -1))[0]
+            features.extend(pca_vec.tolist())
+            features.append(1.0)  # has_esm = True
+        else:
+            features.extend((_esm_pca_mean if _esm_pca_mean is not None
+                              else np.zeros(n_pca, dtype=np.float32)).tolist())
+            features.append(0.0)  # has_esm = False
 
     return features
 
@@ -460,6 +610,58 @@ def train_model(force_retrain: bool = False) -> dict:
             except Exception as e:
                 print(f"[trained_classifier] WARNING: Could not load conservation cache: {e}", file=sys.stderr)
                 _conservation_cache = None
+
+        # Load ESM-2 embedding cache + PCA model (v16+ models only)
+        global _esm_cache, _esm_pca, _esm_pca_mean
+        if _n_features >= 119 and os.path.exists(ESM_CACHE_PATH):
+            try:
+                with open(ESM_CACHE_PATH, "rb") as f:
+                    _esm_cache = pickle.load(f)
+                print(f"[trained_classifier] ESM-2 cache loaded ({len(_esm_cache)} proteins)", file=sys.stderr)
+            except Exception as e:
+                print(f"[trained_classifier] WARNING: Could not load ESM cache: {e}", file=sys.stderr)
+                _esm_cache = None
+
+        if _n_features >= 119 and os.path.exists(ESM_PCA_PATH):
+            try:
+                with open(ESM_PCA_PATH, "rb") as f:
+                    pca_data = pickle.load(f)
+                # The PCA pkl stores a dict {'pca': ..., 'pca_mean': ..., 'esm_dim': ...}
+                if isinstance(pca_data, dict):
+                    _esm_pca = pca_data['pca']
+                    _esm_pca_mean = np.array(pca_data['pca_mean'], dtype=np.float32)
+                elif isinstance(pca_data, tuple):
+                    _esm_pca, _esm_pca_mean = pca_data
+                    _esm_pca_mean = np.array(_esm_pca_mean, dtype=np.float32)
+                else:
+                    _esm_pca = pca_data
+                    _esm_pca_mean = np.zeros(_esm_pca.n_components, dtype=np.float32)
+                print(f"[trained_classifier] ESM-2 PCA loaded ({_esm_pca.n_components} components)", file=sys.stderr)
+            except Exception as e:
+                print(f"[trained_classifier] WARNING: Could not load ESM PCA: {e}", file=sys.stderr)
+                _esm_pca = None
+
+        # Load metal coordination cache (v17+ models)
+        global _metal_coord_cache
+        if _n_features >= 125 and os.path.exists(METAL_COORD_PATH):
+            try:
+                with open(METAL_COORD_PATH, "rb") as f:
+                    _metal_coord_cache = pickle.load(f)
+                print(f"[trained_classifier] Metal coordination cache loaded ({len(_metal_coord_cache)} proteins)", file=sys.stderr)
+            except Exception as e:
+                print(f"[trained_classifier] WARNING: Could not load metal cache: {e}", file=sys.stderr)
+                _metal_coord_cache = None
+
+        # Load physics features cache (v18+ models)
+        global _physics_cache
+        if _n_features >= 131 and os.path.exists(PHYSICS_CACHE_PATH):
+            try:
+                with open(PHYSICS_CACHE_PATH, "rb") as f:
+                    _physics_cache = pickle.load(f)
+                print(f"[trained_classifier] Physics cache loaded ({len(_physics_cache)} proteins)", file=sys.stderr)
+            except Exception as e:
+                print(f"[trained_classifier] WARNING: Could not load physics cache: {e}", file=sys.stderr)
+                _physics_cache = None
 
         print(f"[trained_classifier] Model loaded successfully", file=sys.stderr)
         return _training_metrics

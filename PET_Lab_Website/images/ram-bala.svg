@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-labelledby="title desc">
+  <title id="title">Ram Bala placeholder portrait</title>
+  <desc id="desc">A circular placeholder portrait with the initials RB.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#17304a" />
+      <stop offset="100%" stop-color="#3f8f7b" />
+    </linearGradient>
+    <linearGradient id="ring" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#9bd6c5" />
+      <stop offset="100%" stop-color="#e2f1ec" />
+    </linearGradient>
+  </defs>
+  <rect width="240" height="240" rx="120" fill="url(#bg)" />
+  <circle cx="120" cy="120" r="115" fill="none" stroke="url(#ring)" stroke-width="10" />
+  <circle cx="120" cy="94" r="40" fill="rgba(255,255,255,0.18)" />
+  <path d="M57 197c7-33 33-54 63-54s56 21 63 54" fill="rgba(255,255,255,0.18)" />
+  <text x="120" y="214" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="32" font-weight="700" fill="#f6fbf9" letter-spacing="3">RB</text>
+</svg>

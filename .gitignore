@@ -5,17 +5,6 @@ __pycache__/
 .venv/
 venv/
 
-# Flutter
-petase_app/build/
-petase_app/.dart_tool/
-petase_app/.flutter-plugins
-petase_app/.flutter-plugins-dependencies
-petase_app/.packages
-petase_app/ios/Pods/
-petase_app/macos/Pods/
-petase_app/macos/Flutter/ephemeral/
-petase_app/.metadata
-
 # IDE
 .idea/
 .vscode/
@@ -23,16 +12,23 @@ petase_app/.metadata
 *.swo
 .DS_Store
 
-# ESM-2 model cache (too large for git)
+# Large model/cache files (too large for git — >100MB)
 *.pt
 *.pth
 backend/app/trained_models/esm2_embeddings.pkl
+backend/app/trained_models/esm_embeddings_cache.pkl
+backend/app/trained_models/mutation_regressor.pkl
 
-# Large data files
+# Large data / PDB files
 fireprotdb.zip
 megascale_processed.zip
 fireprotdb_data/fireprot_upload/pdbs/
 Processed_K50_dG_datasets/
+pdb_structures/
+
+# Logs
+*.log
+catboost_info/
 
 # Claude
 .claude/
