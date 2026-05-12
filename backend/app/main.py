@@ -8,8 +8,13 @@ import os
 import sys
 
 
-def _ensure_model_files():
-    """Download model files from Hugging Face if missing (e.g. fresh Render deploy)."""
+import threading
+
+_model_ready = False
+
+def _download_model_files_background():
+    """Download model files from Hugging Face in background thread after server starts."""
+    global _model_ready
     model_dir = os.path.join(os.path.dirname(__file__), "trained_models")
     os.makedirs(model_dir, exist_ok=True)
 
@@ -27,6 +32,8 @@ def _ensure_model_files():
 
     missing = [f for f in files if not os.path.exists(os.path.join(model_dir, f))]
     if not missing:
+        print("[startup] All model files already present.", file=sys.stderr)
+        _model_ready = True
         return
 
     print(f"[startup] Downloading {len(missing)} missing model file(s) from Hugging Face...", file=sys.stderr)
@@ -41,12 +48,10 @@ def _ensure_model_files():
                 token=os.environ.get("HF_TOKEN"),
             )
             print(f"[startup]   Done: {fname}", file=sys.stderr)
-        print("[startup] All model files ready.", file=sys.stderr)
+        print("[startup] All model files downloaded.", file=sys.stderr)
     except Exception as e:
         print(f"[startup] ERROR downloading model files: {e}", file=sys.stderr)
-
-
-_ensure_model_files()
+    _model_ready = True
 
 from .models.schemas import (
     SequenceInput,
@@ -66,10 +71,10 @@ app = FastAPI(
 )
 
 
-@app.on_event("startup")
-def preload_models():
-    """Pre-load ML model and PDB cache at startup so first requests are fast."""
-    import sys
+def _startup_task():
+    """Download model files then load models — runs in background thread."""
+    global _model_ready
+    _download_model_files_background()
     try:
         print("[startup] Pre-loading trained classifier model...", file=sys.stderr)
         trained_classifier.train_model()
@@ -77,15 +82,22 @@ def preload_models():
     except Exception as e:
         print(f"[startup] WARNING: Could not pre-load model: {e}", file=sys.stderr)
     try:
-        print("[startup] Loading PDB cache from disk...", file=sys.stderr)
         from .services.pdb_fetcher import _load_disk_cache
         cached = _load_disk_cache()
         if cached:
             print(f"[startup] PDB disk cache loaded ({len(cached)} entries).", file=sys.stderr)
         else:
-            print("[startup] No PDB disk cache found — first /pdb/search will fetch from network.", file=sys.stderr)
+            print("[startup] No PDB disk cache found.", file=sys.stderr)
     except Exception as e:
         print(f"[startup] WARNING: PDB cache check failed: {e}", file=sys.stderr)
+    _model_ready = True
+
+
+@app.on_event("startup")
+def preload_models():
+    """Bind port immediately, download + load models in background thread."""
+    t = threading.Thread(target=_startup_task, daemon=True)
+    t.start()
 
 app.add_middleware(
     CORSMiddleware,
