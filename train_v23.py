@@ -1456,7 +1456,7 @@ def main():
     # ── Optuna objective for XGBoost ──
     def xgb_objective(trial):
         params = {
-            'n_estimators':     trial.suggest_int('n_estimators', 400, 1200),
+            'n_estimators':     trial.suggest_int('n_estimators', 200, 600),
             'max_depth':        trial.suggest_int('max_depth', 4, 8),
             'learning_rate':    trial.suggest_float('learning_rate', 0.01, 0.08, log=True),
             'subsample':        trial.suggest_float('subsample', 0.6, 1.0),
@@ -1464,15 +1464,15 @@ def main():
             'min_child_weight': trial.suggest_int('min_child_weight', 3, 20),
             'reg_alpha':        trial.suggest_float('reg_alpha', 1e-3, 1.0, log=True),
             'reg_lambda':       trial.suggest_float('reg_lambda', 0.5, 5.0),
-            'random_state': 42, 'verbosity': 0,
+            'random_state': 42, 'verbosity': 0, 'n_jobs': -1,
         }
         model = XGBRegressor(**params)
         preds = cross_val_predict(model, X_tune, y_tune, cv=kf5_tune)
         return mean_absolute_error(y_tune, preds)
 
-    print("\n  [Optuna] Tuning XGBoost (150 trials on subsample)...")
+    print("\n  [Optuna] Tuning XGBoost (50 trials on subsample)...")
     xgb_study = optuna.create_study(direction='minimize')
-    xgb_study.optimize(xgb_objective, n_trials=150, show_progress_bar=False)
+    xgb_study.optimize(xgb_objective, n_trials=50, show_progress_bar=False)
     best_xgb = xgb_study.best_params
     print(f"    Best XGB MAE: {xgb_study.best_value:.4f} | params: {best_xgb}")
     xgb_reg = XGBRegressor(**best_xgb, random_state=42, verbosity=0)
@@ -1497,9 +1497,9 @@ def main():
         preds = cross_val_predict(model, X_tune, y_tune, cv=kf5_tune)
         return mean_absolute_error(y_tune, preds)
 
-    print("\n  [Optuna] Tuning LightGBM (150 trials on subsample)...")
+    print("\n  [Optuna] Tuning LightGBM (50 trials on subsample)...")
     lgbm_study = optuna.create_study(direction='minimize')
-    lgbm_study.optimize(lgbm_objective, n_trials=150, show_progress_bar=False)
+    lgbm_study.optimize(lgbm_objective, n_trials=50, show_progress_bar=False)
     best_lgbm = lgbm_study.best_params
     print(f"    Best LGBM MAE: {lgbm_study.best_value:.4f} | params: {best_lgbm}")
     lgbm_reg = LGBMRegressor(**best_lgbm, n_jobs=-1, random_state=42, verbosity=-1)
