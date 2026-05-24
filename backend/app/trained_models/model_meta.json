@@ -5,7 +5,7 @@
   "use_stacking": true,
   "meta_type": "Ridge",
   "optimal_threshold": 0.08459022583478906,
-  "n_features": 141,
+  "n_features": 144,
   "feature_version": "v10_cross_terms",
   "condition_features": {
     "feature_49": "temperature_C (assay temperature from ThermoMutDB/FireProtDB)",

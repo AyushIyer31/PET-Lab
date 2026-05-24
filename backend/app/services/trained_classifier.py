@@ -30,6 +30,7 @@ ESM_CACHE_PATH = os.path.join(MODEL_DIR, "esm_embeddings_cache.pkl")
 ESM_PCA_PATH = os.path.join(MODEL_DIR, "esm_pca.pkl")
 METAL_COORD_PATH = os.path.join(MODEL_DIR, "metal_coord_cache.pkl")
 PHYSICS_CACHE_PATH = os.path.join(MODEL_DIR, "physics_features_cache.pkl")
+PLDDT_CACHE_PATH = os.path.join(MODEL_DIR, "plddt_pdb_cache.pkl")
 
 _ensemble = None  # dict with 'models' list and 'weights'
 _scaler = None
@@ -42,6 +43,7 @@ _esm_pca = None        # fitted sklearn PCA object
 _esm_pca_mean = None   # mean PCA vector for imputation
 _metal_coord_cache = None  # {protein_id: {resnum: set of metal symbols}}
 _physics_cache = None  # {protein_id: {resnum: np.array(6,)}}
+_plddt_cache = None    # {protein_id: np.array(n_residues,)} AlphaFold pLDDT scores
 
 # ═══════════════════════════════════════════════════════════
 # Amino acid property tables
@@ -233,6 +235,23 @@ def _estimate_secondary_structure(sequence, position):
 
 PSSM_AA_ORDER = list("ARNDCQEGHILKMFPSTWYV")
 
+
+def _get_plddt_features(protein_id: str, position: int) -> tuple:
+    """Return (pos_score, window_mean, is_disordered) from AlphaFold pLDDT cache."""
+    if not _plddt_cache or not protein_id:
+        return (0.0, 0.0, 0.0)
+    scores = _plddt_cache.get(protein_id)
+    if scores is None:
+        return (0.0, 0.0, 0.0)
+    idx = int(position) - 1
+    if idx < 0 or idx >= len(scores):
+        return (0.0, 0.0, 0.0)
+    pos_score = float(scores[idx])
+    window = scores[max(0, idx - 5): idx + 6]
+    mean_score = float(np.mean(window))
+    return (pos_score / 100.0, mean_score / 100.0, float(pos_score < 50.0))
+
+
 def _get_conservation_features(protein_id, position, wt_aa, mut_aa):
     """Extract 6 PSSM conservation features."""
     if not _conservation_cache or not protein_id:
@@ -269,8 +288,9 @@ def _extract_features(wt_aa: str, position: int, mut_aa: str,
     or 48 features for backward compatibility with older model files.
     Features 49-50 are assay temperature (°C) and pH.
     """
+    _n_base_single = _n_features - 3 if _n_features >= 142 else _n_features
     if wt_aa not in AA_SET or mut_aa not in AA_SET:
-        return [0.0] * _n_features
+        return [0.0] * _n_base_single
 
     features = []
 
@@ -663,6 +683,17 @@ def train_model(force_retrain: bool = False) -> dict:
                 print(f"[trained_classifier] WARNING: Could not load physics cache: {e}", file=sys.stderr)
                 _physics_cache = None
 
+        # Load AlphaFold pLDDT cache (v44+ models, 144 features)
+        global _plddt_cache
+        if _n_features >= 142 and os.path.exists(PLDDT_CACHE_PATH):
+            try:
+                with open(PLDDT_CACHE_PATH, "rb") as f:
+                    _plddt_cache = pickle.load(f)
+                print(f"[trained_classifier] pLDDT cache loaded ({len(_plddt_cache)} proteins)", file=sys.stderr)
+            except Exception as e:
+                print(f"[trained_classifier] WARNING: Could not load pLDDT cache: {e}", file=sys.stderr)
+                _plddt_cache = None
+
         print(f"[trained_classifier] Model loaded successfully", file=sys.stderr)
         return _training_metrics
 
@@ -673,13 +704,12 @@ def train_model(force_retrain: bool = False) -> dict:
 
 
 def _ensemble_predict(features_scaled):
-    """Get ensemble DDG prediction — stacking meta-learner if available, else weighted average."""
+    """Get ensemble DDG prediction — weighted average of base regressors.
+
+    The meta_learner (Ridge) was trained on 87-col OOF stack that cannot be
+    reconstructed at inference time, so we use weighted average instead.
+    """
     base_preds = [model.predict(features_scaled) for (_, model) in _ensemble['models']]
-
-    if _ensemble.get('use_stacking') and _ensemble.get('meta_learner') is not None:
-        stack = np.column_stack(base_preds)
-        return _ensemble['meta_learner'].predict(stack)
-
     weights = _ensemble.get('weights', [1.0 / len(base_preds)] * len(base_preds))
     return np.sum([p * w for p, w in zip(base_preds, weights)], axis=0) / sum(weights)
 
@@ -702,6 +732,9 @@ def predict_mutation(wt_aa: str, position: int, mut_aa: str,
     features = np.array([_extract_features(wt_aa, position, mut_aa,
                                            sequence=sequence, protein_id=protein_id)])
     features_scaled = _scaler.transform(features)
+    if _n_features >= 142:
+        plddt = np.array([_get_plddt_features(protein_id or "", position)], dtype=np.float32)
+        features_scaled = np.hstack([features_scaled, plddt])
 
     predicted_ddg = float(_ensemble_predict(features_scaled)[0])
 
@@ -733,7 +766,9 @@ def _extract_features_batch(mutation_tuples: list[tuple], sequence: str = None,
     ph: assay pH (user-selected, applied to all mutations)
     """
     n = len(mutation_tuples)
-    features = np.zeros((n, _n_features), dtype=np.float64)
+    # pLDDT features (last 3) are appended after scaling — scaler expects _n_features - 3
+    _n_base = _n_features - 3 if _n_features >= 142 else _n_features
+    features = np.zeros((n, _n_base), dtype=np.float64)
 
     # Pre-compute sequence-level data once (shared across all mutations)
     seq_len = len(sequence) if sequence else 0
@@ -897,6 +932,17 @@ def predict_mutations_batch_raw(mutation_tuples: list[tuple], sequence: str = No
         temperature=temperature, ph=ph,
     )
     all_scaled = _scaler.transform(all_features)
+
+    # Append pLDDT features after scaler (added post-scaling in training, v44+)
+    if _n_features >= 142 and _plddt_cache is not None:
+        plddt_feats = np.array([
+            _get_plddt_features(protein_id or "", pos)
+            for (_, pos, _) in mutation_tuples
+        ], dtype=np.float32)
+        all_scaled = np.hstack([all_scaled, plddt_feats])
+    elif _n_features >= 142:
+        all_scaled = np.hstack([all_scaled, np.zeros((len(mutation_tuples), 3), dtype=np.float32)])
+
     all_ddg = _ensemble_predict(all_scaled)
     all_prob = 1.0 / (1.0 + np.exp(all_ddg))
     return all_ddg, all_prob
